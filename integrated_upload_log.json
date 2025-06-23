@@ -1,0 +1,37 @@
+{
+  "https://mp.weixin.qq.com/s/LiS8ytwKsKP9yAHGp96G_Q": {
+    "timestamp": 1749456362.2579103,
+    "file_path": "output\\auto_download\\更新公告 _ 6月5日更新维护公告.pdf",
+    "wiki_token": "7513857852580593683-fd68fc4b77267c45cc27267ae22a19d8e84777c3",
+    "status": "completed",
+    "error": null
+  },
+  "https://mp.weixin.qq.com/s/uh2wHI13PvsmUh9JQwwmHQ": {
+    "timestamp": 1749456732.3688939,
+    "file_path": "output\\auto_download\\热点问题汇总 _ 三转问题汇总（二）（第28集）.pdf",
+    "wiki_token": "7513859442180538371-d22dda6ea510e42c9b7c402aeb9535b66a829f59",
+    "status": "completed",
+    "error": null
+  },
+  "https://mp.weixin.qq.com/s/NtKMEwCrwN_8fxAh3gjMRw": {
+    "timestamp": 1749457248.1520152,
+    "file_path": "output\\auto_download\\冒险日历 _ 六月月历：沧渊启扉.pdf",
+    "wiki_token": "7513861657525846019-4358840ea6716e400071e11203054dc11e52753f",
+    "status": "completed",
+    "error": null
+  },
+  "https://mp.weixin.qq.com/s/BWad0N0Efc4Bv6QoVDuS1A": {
+    "timestamp": 1749466083.6438835,
+    "file_path": "output\\auto_download\\获奖名单 _ 「转发有礼 _ 不是孤狼是猛虎！神队友集结令：神选者开战倒计时，组队就送“兄弟buff”！」实物获奖名单.pdf",
+    "wiki_token": "TFibwQqcuieuPCk9mmacCTWSnLf",
+    "status": "completed",
+    "error": null
+  },
+  "https://mp.weixin.qq.com/s/KRzndJx_UlvzF7_ZcJgnjg": {
+    "timestamp": 1749628124.8823547,
+    "file_path": "output\\auto_download\\卡普拉独家 _ ROX专属节日：公测纪念日活动开启预告.pdf",
+    "wiki_token": "7514595567413444611-658c590da0861c2a436f012021970f47a764d72f",
+    "status": "completed",
+    "error": null
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "app_id": "cli_a7fb1459aafb500c",
+  "app_secret": "4gFlh7eaUSkYvEFCTp1xZgGe4BHRZ0jn",
+  "access_token": "fILxBrgv1ejWQ3rmYHQSpQ4l5q.h04EhNq20ggSawCW8",
+  "space_token": "Dql8w6MlxiLJLTkzpFGcPv2Fnzd",
+  "space_id": "7511922459407450115",
+  "space_name": "仙境传说RO新启航公众号文章合集",
+  "api_base": "https://open.feishu.cn/open-apis",
+  "mode": "user_complete",
+  "test_success": true,
+  "test_time": "2025-06-06 17:33:13",
+  "test_document_url": "https://thedream.feishu.cn/wiki/H9L4wRV0LiHIi7ku1Dbc9PSgnjp",
+  "capabilities": {
+    "知识库权限": true,
+    "云文档权限": true,
+    "文件上传权限": true,
+    "完整上传流程": true
+  }
+}

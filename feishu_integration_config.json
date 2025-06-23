@@ -1,0 +1,31 @@
+{
+  "app_id": "cli_a8c822312a75901c",
+  "app_secret": "NDbCyKEwEIA8CZo2KHyqueIOlcafErko",
+  "space_id": "7511922459407450115",
+  "space_token": "Rkr5w3y8hib7dRk1KpFcMZ7tnGc",
+  "wiki_name": "仙境传说RO新启航公众号文章合集",
+  "wiki_url": "https://thedream.feishu.cn/wiki/Rkr5w3y8hib7dRk1KpFcMZ7tnGc",
+  "token_type": "tenant",
+  "capabilities": {
+    "wiki_access": true,
+    "file_upload": false,
+    "doc_creation": false
+  },
+  "permissions_needed": {
+    "drive_drive": "文件基础权限",
+    "drive_file": "文件操作权限", 
+    "drive_file_upload": "文件上传权限"
+  },
+  "status": {
+    "last_test": "2025-06-06T17:07:21",
+    "connection_ok": true,
+    "upload_available": false,
+    "mode": "detection_only"
+  },
+  "integration_notes": [
+    "✅ 知识库检测功能正常",
+    "⚠️ 文件上传需要申请更多权限",
+    "💡 当前支持: 知识库连接验证",
+    "🔄 下一步: 申请drive权限以启用文件上传"
+  ]
+} 
