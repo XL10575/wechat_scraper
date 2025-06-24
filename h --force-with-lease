@@ -1,0 +1,3 @@
+[33m594b863[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m 添加自动收集功能使用说明文档
+[33m76f5e98[m 实现自动文章收集功能 - 添加无头微信收集器并更新workflow
+[33m70e45c7[m[33m ([m[1;31morigin/main[m[33m)[m 修复GitHub Actions deprecated版本问题和Chrome启动问题
