@@ -1,316 +1,227 @@
-name: 🤖 RO文章自动更新 (增强版)
+name: Auto Update RO Articles Enhanced
 
 on:
   schedule:
-    # 每天北京时间上午10:00执行 (UTC时间2:00)
+    # 每天北京时间10:00运行 (UTC 02:00)
     - cron: '0 2 * * *'
-  
-  # 支持手动触发
   workflow_dispatch:
     inputs:
       force_update:
-        description: '强制执行更新（忽略日期检查）'
+        description: '强制更新（收集最近7天的文章）'
         required: false
         default: false
         type: boolean
-      days_back:
-        description: '收集最近几天的文章'
+      max_articles:
+        description: '最大文章数量'
         required: false
-        default: '7'
+        default: '30'
         type: string
-
-env:
-  # 从GitHub Secrets获取飞书应用配置
-  FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-  FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-  FEISHU_ACCESS_TOKEN: ${{ secrets.FEISHU_ACCESS_TOKEN }}
-  FEISHU_REFRESH_TOKEN: ${{ secrets.FEISHU_REFRESH_TOKEN }}
-  FEISHU_SPACE_TOKEN: ${{ secrets.FEISHU_SPACE_TOKEN }}
-  FEISHU_SPACE_ID: ${{ secrets.FEISHU_SPACE_ID }}
-  # 微信登录状态
-  WECHAT_COOKIES_B64: ${{ secrets.WECHAT_COOKIES_B64 }}
-  WECHAT_USER_AGENT: ${{ secrets.WECHAT_USER_AGENT }}
 
 jobs:
   auto-update:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     
     steps:
-    - name: 📥 检出代码
+    - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: 🐍 设置Python环境
+    - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
         
-    - name: 📦 安装依赖
+    - name: Install dependencies
       run: |
-        pip install --upgrade pip
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: 🌐 安装Chrome浏览器
+    - name: Restore WeChat login state
       run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+        # 恢复cookies
+        echo "${{ secrets.WECHAT_COOKIES_B64 }}" | base64 -d > wechat_cookies.pkl
         
-    - name: 🔧 配置虚拟显示器
-      run: |
-        sudo apt-get install -y xvfb
-        export DISPLAY=:99
-        Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
-        
-    - name: 📁 创建必要目录
-      run: |
-        mkdir -p output/auto_download
-        mkdir -p logs
-        
-    - name: 🔐 配置飞书认证信息和微信登录状态
-      run: |
-        # 创建飞书OAuth令牌文件
-        cat > feishu_oauth_tokens.json << EOF
-        {
-          "access_token": "${{ secrets.FEISHU_ACCESS_TOKEN }}",
-          "refresh_token": "${{ secrets.FEISHU_REFRESH_TOKEN }}",
-          "expires_in": 6900,
-          "token_type": "Bearer",
-          "scope": null,
-          "created_at": $(date +%s),
-          "app_id": "${{ secrets.FEISHU_APP_ID }}"
-        }
-        EOF
-        
-        # 创建微信登录状态文件
-        if [ -n "${{ secrets.WECHAT_COOKIES_B64 }}" ]; then
-          echo "🔐 恢复微信登录状态..."
-          echo "${{ secrets.WECHAT_COOKIES_B64 }}" | base64 -d > wechat_cookies.pkl
-          
-          cat > wechat_session.json << EOF
+        # 恢复会话信息
+        cat > wechat_session.json << 'EOF'
         {
           "user_agent": "${{ secrets.WECHAT_USER_AGENT }}",
-          "timestamp": $(date +%s),
-          "login_success": true,
-          "restored_from_github": true
+          "login_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "restored_from_secrets": true
         }
         EOF
-          echo "✅ 微信登录状态已恢复"
-        else
-          echo "⚠️ 未找到微信登录状态，可能需要重新登录"
+        
+        echo "✅ 微信登录状态已恢复"
+        
+    - name: Auto collect WeChat articles
+      run: |
+        python -c "
+        from headless_wechat_collector import HeadlessWeChatCollector
+        from datetime import datetime, timedelta
+        import json
+        import os
+        
+        # 获取输入参数
+        force_update = '${{ github.event.inputs.force_update }}' == 'true'
+        max_articles = int('${{ github.event.inputs.max_articles }}' or '30')
+        
+        print(f'🚀 开始自动收集微信文章...')
+        print(f'📊 参数: 强制更新={force_update}, 最大文章数={max_articles}')
+        
+        # 创建收集器
+        collector = HeadlessWeChatCollector()
+        
+        # 确定收集时间范围
+        if force_update:
+            days_back = 7
+            print('🔄 强制更新模式: 收集最近7天的文章')
+        else:
+            # 检查上次更新时间
+            try:
+                with open('ro_auto_update_settings.json', 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    last_update = datetime.fromisoformat(settings.get('last_update', '2025-01-01T00:00:00'))
+                    days_since_update = (datetime.now() - last_update).days
+                    days_back = min(max(days_since_update + 1, 1), 30)  # 至少1天，最多30天
+                    print(f'📅 上次更新: {last_update.strftime(\"%Y-%m-%d %H:%M:%S\")}')
+                    print(f'📅 收集最近 {days_back} 天的文章')
+            except:
+                days_back = 7
+                print('📅 首次运行，收集最近7天的文章')
+        
+        # 自动收集文章
+        articles = collector.auto_collect_articles(
+            account_name='仙境传说RO新启航',
+            days_back=days_back,
+            max_articles=max_articles
+        )
+        
+        print(f'✅ 收集完成: {len(articles)} 篇文章')
+        
+        if articles:
+            # 保存文章URL到文件
+            urls = [article['url'] for article in articles if article.get('url')]
+            
+            # 确保输出目录存在
+            os.makedirs('output', exist_ok=True)
+            
+            with open('output/collected_urls.txt', 'w', encoding='utf-8') as f:
+                for url in urls:
+                    f.write(url + '\n')
+            
+            print(f'📄 已保存 {len(urls)} 个文章URL到 output/collected_urls.txt')
+            
+            # 显示收集到的文章
+            print('\n📋 收集到的文章:')
+            for i, article in enumerate(articles[:10], 1):
+                title = article.get('title', '无标题')[:60]
+                publish_time = article.get('publish_time', '未知时间')
+                print(f'  {i}. {title}... - {publish_time}')
+            
+            if len(articles) > 10:
+                print(f'  ... 还有 {len(articles) - 10} 篇文章')
+        else:
+            print('⚠️ 未收集到任何文章')
+            # 创建空文件避免后续步骤出错
+            os.makedirs('output', exist_ok=True)
+            with open('output/collected_urls.txt', 'w') as f:
+                pass
+        
+        # 设置输出变量
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+            f.write(f'articles_count={len(articles)}\n')
+            f.write(f'has_articles={\"true\" if articles else \"false\"}\n')
+        "
+      id: collect_articles
+      
+    - name: Process collected articles
+      if: steps.collect_articles.outputs.has_articles == 'true'
+      run: |
+        echo "📥 开始处理收集到的文章..."
+        
+        # 检查是否有URL文件
+        if [ ! -f "output/collected_urls.txt" ] || [ ! -s "output/collected_urls.txt" ]; then
+          echo "❌ 没有找到文章URL文件或文件为空"
           exit 1
         fi
         
-        # 创建用户配置文件
-        cat > user_feishu_config.json << EOF
-        {
-          "app_id": "${{ secrets.FEISHU_APP_ID }}",
-          "app_secret": "${{ secrets.FEISHU_APP_SECRET }}",
-          "access_token": "${{ secrets.FEISHU_ACCESS_TOKEN }}",
-          "space_token": "${{ secrets.FEISHU_SPACE_TOKEN }}",
-          "space_id": "${{ secrets.FEISHU_SPACE_ID }}",
-          "space_name": "仙境传说RO新启航公众号文章合集",
-          "api_base": "https://open.feishu.cn/open-apis",
-          "mode": "user_complete",
-          "test_success": true,
-          "test_time": "$(date '+%Y-%m-%d %H:%M:%S')",
-          "capabilities": {
-            "知识库权限": true,
-            "云文档权限": true,
-            "文件上传权限": true,
-            "完整上传流程": true
-          }
-        }
-        EOF
+        # 统计URL数量
+        url_count=$(wc -l < output/collected_urls.txt)
+        echo "📊 共有 $url_count 个文章URL待处理"
         
-    - name: 🧪 测试文章收集功能
+        # 运行集成下载上传器
+        python integrated_auto_download_uploader.py \
+          --input output/collected_urls.txt \
+          --max-files ${{ steps.collect_articles.outputs.articles_count }} \
+          --auto-mode
+        
+        echo "✅ 文章处理完成"
+        
+    - name: Update settings and statistics
       run: |
-        export DISPLAY=:99
         python -c "
-        import sys
-        import os
-        from datetime import datetime, timedelta
-        from headless_wechat_collector import HeadlessWeChatCollector
-        
-        print('🧪 测试文章收集功能')
-        print('=' * 50)
-        
-        try:
-            # 获取参数
-            days_back = int('${{ github.event.inputs.days_back }}' or '7')
-            force_update = '${{ github.event.inputs.force_update }}' == 'true'
-            
-            if force_update:
-                days_back = max(days_back, 14)  # 强制更新时至少收集14天
-            
-            print(f'📅 收集范围: 最近 {days_back} 天')
-            print(f'🔄 强制更新: {force_update}')
-            
-            # 初始化收集器
-            collector = HeadlessWeChatCollector()
-            
-            # 测试收集
-            articles = collector.auto_collect_articles(
-                account_name='仙境传说RO新启航',
-                days_back=days_back,
-                max_articles=100
-            )
-            
-            print(f'📊 收集结果: {len(articles)} 篇文章')
-            
-            if articles:
-                print('📝 文章列表:')
-                for i, article in enumerate(articles[:5], 1):
-                    title = article.get('title', '无标题')[:50]
-                    publish_time = article.get('publish_time', '未知时间')
-                    print(f'  {i}. {title}... ({publish_time})')
-                
-                # 保存收集结果
-                import json
-                with open('collected_articles.json', 'w', encoding='utf-8') as f:
-                    json.dump(articles, f, indent=2, ensure_ascii=False)
-                
-                print('✅ 文章收集成功，已保存到 collected_articles.json')
-            else:
-                print('❌ 没有收集到文章')
-                print('🔍 可能的原因:')
-                print('  1. 指定时间范围内没有新文章')
-                print('  2. 微信登录状态已过期')
-                print('  3. 网络连接问题')
-                print('  4. 微信API变更')
-                
-                # 尝试更大的时间范围
-                if days_back < 30:
-                    print(f'🔄 尝试扩大到30天范围...')
-                    articles = collector.auto_collect_articles(
-                        account_name='仙境传说RO新启航',
-                        days_back=30,
-                        max_articles=50
-                    )
-                    
-                    if articles:
-                        print(f'✅ 扩大范围后收集到 {len(articles)} 篇文章')
-                        import json
-                        with open('collected_articles.json', 'w', encoding='utf-8') as f:
-                            json.dump(articles, f, indent=2, ensure_ascii=False)
-                    else:
-                        print('❌ 扩大范围后仍无收集结果')
-                        sys.exit(1)
-                
-        except Exception as e:
-            print(f'❌ 测试失败: {e}')
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-        "
-        
-    - name: 🤖 处理收集到的文章
-      if: success()
-      run: |
-        export DISPLAY=:99
-        python -c "
-        import sys
-        import os
         import json
         from datetime import datetime
-        from integrated_auto_download_uploader import IntegratedAutoUploader
+        import os
         
-        print('🚀 处理收集到的文章')
-        print('=' * 50)
-        
+        # 读取当前设置
+        settings_file = 'ro_auto_update_settings.json'
         try:
-            # 检查是否有收集到的文章
-            if not os.path.exists('collected_articles.json'):
-                print('❌ 未找到收集的文章文件')
-                sys.exit(1)
-            
-            # 读取文章列表
-            with open('collected_articles.json', 'r', encoding='utf-8') as f:
-                articles = json.load(f)
-            
-            if not articles:
-                print('❌ 文章列表为空')
-                sys.exit(1)
-            
-            print(f'📚 开始处理 {len(articles)} 篇文章')
-            
-            # 初始化上传器
-            app_id = os.getenv('FEISHU_APP_ID')
-            app_secret = os.getenv('FEISHU_APP_SECRET')
-            
-            if not app_id or not app_secret:
-                print('❌ 飞书应用配置缺失')
-                sys.exit(1)
-            
-            uploader = IntegratedAutoUploader(app_id, app_secret)
-            
-            success_count = 0
-            total_count = len(articles)
-            
-            for i, article in enumerate(articles, 1):
-                url = article.get('url')
-                title = article.get('title', f'文章{i}')
-                
-                if not url:
-                    print(f'⚠️ 第{i}篇文章缺少URL，跳过')
-                    continue
-                
-                print(f'📄 处理 {i}/{total_count}: {title[:40]}...')
-                print(f'   URL: {url[:80]}...')
-                
-                try:
-                    result = uploader.process_single_url(url, format_type='pdf')
-                    if result:
-                        success_count += 1
-                        print(f'   ✅ 成功上传到飞书')
-                    else:
-                        print(f'   ❌ 上传失败')
-                except Exception as e:
-                    print(f'   ❌ 处理出错: {e}')
-                    
-                # 避免过快请求
-                if i < total_count:
-                    print(f'   ⏳ 等待 3 秒...')
-                    import time
-                    time.sleep(3)
-                    
-            print(f'📊 处理完成: {success_count}/{total_count} 成功')
-            
-            # 更新设置文件
-            settings = {
-                'last_update_date': datetime.now().strftime('%Y-%m-%d'),
-                'last_check_time': datetime.now().isoformat(),
-                'processed_count': success_count,
-                'total_count': total_count,
-                'status': 'completed',
-                'articles_collected': len(articles),
-                'success_rate': f'{success_count}/{total_count}' if total_count > 0 else '0/0'
-            }
-            
-            with open('ro_auto_update_settings.json', 'w', encoding='utf-8') as f:
-                json.dump(settings, f, indent=2, ensure_ascii=False)
-            
-            print(f'🎉 自动更新完成！')
-            print(f'📊 收集文章: {len(articles)} 篇')
-            print(f'📊 成功上传: {success_count}/{total_count} 篇')
-            print(f'📊 成功率: {success_count/total_count*100:.1f}%' if total_count > 0 else '📊 成功率: 0%')
-            
-        except Exception as e:
-            print(f'❌ 处理文章失败: {e}')
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+        except:
+            settings = {}
+        
+        # 更新设置
+        current_time = datetime.now()
+        articles_count = int('${{ steps.collect_articles.outputs.articles_count }}')
+        
+        settings.update({
+            'last_update': current_time.isoformat(),
+            'last_run_articles_count': articles_count,
+            'total_runs': settings.get('total_runs', 0) + 1,
+            'total_articles_collected': settings.get('total_articles_collected', 0) + articles_count,
+            'last_run_mode': '强制更新' if '${{ github.event.inputs.force_update }}' == 'true' else '自动更新',
+            'github_actor': '${{ github.actor }}',
+            'workflow_run_id': '${{ github.run_id }}'
+        })
+        
+        # 保存设置
+        with open(settings_file, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        
+        print(f'📊 运行统计:')
+        print(f'  - 本次收集: {articles_count} 篇文章')
+        print(f'  - 总运行次数: {settings[\"total_runs\"]}')
+        print(f'  - 累计收集: {settings[\"total_articles_collected\"]} 篇文章')
+        print(f'  - 运行模式: {settings[\"last_run_mode\"]}')
+        print(f'  - 更新时间: {current_time.strftime(\"%Y-%m-%d %H:%M:%S\")}')
         "
         
-    - name: 📊 上传执行日志和结果
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: auto-update-enhanced-logs-${{ github.run_number }}
-        path: |
-          logs/
-          ro_auto_update_settings.json
-          collected_articles.json
-        retention-days: 7 
+    - name: Cleanup temporary files
+      run: |
+        # 清理敏感文件
+        rm -f wechat_cookies.pkl
+        rm -f wechat_session.json
+        
+        # 保留日志文件但清理临时文件
+        find . -name "*.tmp" -delete 2>/dev/null || true
+        find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+        
+        echo "🧹 临时文件清理完成"
+        
+    - name: Summary
+      run: |
+        echo "🎉 自动更新任务完成！"
+        echo ""
+        echo "📊 本次运行总结:"
+        echo "  - 收集文章数量: ${{ steps.collect_articles.outputs.articles_count }}"
+        echo "  - 处理状态: ${{ steps.collect_articles.outputs.has_articles == 'true' && '✅ 成功' || '⚠️ 无新文章' }}"
+        echo "  - 运行时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        echo "  - 触发方式: ${{ github.event_name == 'schedule' && '定时任务' || '手动触发' }}"
+        
+        if [ "${{ steps.collect_articles.outputs.has_articles }}" = "true" ]; then
+          echo ""
+          echo "✅ 文章已成功收集并上传到飞书知识库"
+        else
+          echo ""
+          echo "ℹ️ 本次运行未收集到新文章，这可能是正常的"
+        fi 
