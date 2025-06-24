@@ -138,7 +138,7 @@ jobs:
         import json
         from datetime import datetime, timedelta
         from integrated_auto_download_uploader import IntegratedAutoUploader
-        from wechat_article_link_collector import WechatArticleLinkCollector
+        from headless_wechat_collector import HeadlessWeChatCollector
         
         print('🚀 GitHub Actions - RO文章自动更新开始')
         print('=' * 60)
@@ -180,24 +180,31 @@ jobs:
             
             print(f'📅 更新日期范围: {start_date} 至 {end_date}')
             
-            # 步骤2: 初始化链接收集器
-            print('🔍 步骤2: 初始化链接收集器...')
-            collector = WechatArticleLinkCollector(headless=True)
-            
-            # 步骤3: 收集新文章
-            print(f'📥 步骤3: 收集新文章 ({start_date} 至 {end_date})...')
+            # 步骤2: 使用无头收集器自动收集文章
+            print('🔍 步骤2: 自动收集微信文章...')
             
             try:
-                # 自动登录和搜索公众号
-                login_success = collector.auto_login_and_search('仙境传说RO新启航')
-                if not login_success:
-                    print('❌ 自动登录或搜索公众号失败')
-                    sys.exit(1)
-                    
-                # 收集文章
-                articles = collector.collect_articles_by_date_range(
-                    start_date=start_date,
-                    end_date=end_date,
+                # 初始化无头收集器
+                collector = HeadlessWeChatCollector()
+                
+                # 计算收集天数
+                if force_update:
+                    days_back = 7  # 强制更新时收集一周的文章
+                else:
+                    # 计算自上次更新以来的天数
+                    try:
+                        last_date_obj = datetime.strptime(last_date, '%Y-%m-%d')
+                        days_back = (datetime.now() - last_date_obj).days + 1
+                        days_back = min(days_back, 30)  # 最多30天
+                    except:
+                        days_back = 1  # 默认1天
+                
+                print(f'📅 收集范围: 最近 {days_back} 天的文章')
+                
+                # 自动收集文章
+                articles = collector.auto_collect_articles(
+                    account_name='仙境传说RO新启航',
+                    days_back=days_back,
                     max_articles=50
                 )
                 
@@ -206,19 +213,49 @@ jobs:
                 if len(articles) == 0:
                     print('✅ 没有新文章需要更新')
                     # 更新最后检查日期
+                    settings = {}
+                    try:
+                        with open('ro_auto_update_settings.json', 'r') as f:
+                            settings = json.load(f)
+                    except:
+                        settings = {}
+                        
                     settings['last_update_date'] = today
+                    settings['last_check_time'] = datetime.now().isoformat()
+                    settings['status'] = 'no_new_articles'
+                    
                     with open('ro_auto_update_settings.json', 'w') as f:
                         json.dump(settings, f, indent=2, ensure_ascii=False)
+                    
+                    print('✅ 自动更新检查完成（无新文章）')
                     sys.exit(0)
                     
             except Exception as e:
                 print(f'❌ 收集文章时出错: {e}')
+                print('💡 可能的原因：')
+                print('   1. 微信登录状态已过期，需要重新生成secrets')
+                print('   2. 网络连接问题')
+                print('   3. 微信API变更')
+                
+                # 记录错误并退出
+                settings = {}
+                try:
+                    with open('ro_auto_update_settings.json', 'r') as f:
+                        settings = json.load(f)
+                except:
+                    settings = {}
+                    
+                settings['last_check_time'] = datetime.now().isoformat()
+                settings['status'] = 'collection_failed'
+                settings['error'] = str(e)
+                
+                with open('ro_auto_update_settings.json', 'w') as f:
+                    json.dump(settings, f, indent=2, ensure_ascii=False)
+                
                 sys.exit(1)
-            finally:
-                collector.cleanup()
             
-            # 步骤4: 处理文章下载上传
-            print(f'📚 步骤4: 处理文章下载上传...')
+            # 步骤3: 处理文章下载上传
+            print(f'📚 步骤3: 处理文章下载上传...')
             
             uploader = IntegratedAutoUploader(app_id, app_secret)
             
@@ -230,26 +267,51 @@ jobs:
                 title = article.get('title', f'文章{i}')
                 
                 print(f'📄 处理 {i}/{total_count}: {title[:30]}...')
+                print(f'   URL: {url[:80]}...')
                 
                 try:
                     result = uploader.process_single_url(url, format_type='pdf')
                     if result:
                         success_count += 1
-                        print(f'   ✅ 成功')
+                        print(f'   ✅ 成功上传到飞书')
                     else:
-                        print(f'   ❌ 失败')
+                        print(f'   ❌ 上传失败')
                 except Exception as e:
                     print(f'   ❌ 处理出错: {e}')
                     
+                # 避免过快请求
+                if i < total_count:
+                    print(f'   ⏳ 等待 3 秒...')
+                    import time
+                    time.sleep(3)
+                    
             print(f'📊 处理完成: {success_count}/{total_count} 成功')
             
-            # 步骤5: 更新设置
-            print('📅 步骤5: 更新检查日期...')
+            # 步骤4: 更新设置
+            print('📅 步骤4: 更新检查日期...')
+            
+            # 重新读取设置（可能在前面被修改）
+            try:
+                with open('ro_auto_update_settings.json', 'r') as f:
+                    settings = json.load(f)
+            except:
+                settings = {}
+                
             settings['last_update_date'] = today
+            settings['last_check_time'] = datetime.now().isoformat()
+            settings['processed_count'] = success_count
+            settings['total_count'] = total_count
+            settings['status'] = 'completed'
+            settings['articles_collected'] = len(articles)
+            settings['success_rate'] = f'{success_count}/{total_count}' if total_count > 0 else '0/0'
+            
             with open('ro_auto_update_settings.json', 'w') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
             
-            print(f'🎉 RO自动更新完成！成功处理 {success_count}/{total_count} 篇文章')
+            print(f'🎉 RO自动更新完成！')
+            print(f'📊 收集文章: {len(articles)} 篇')
+            print(f'📊 成功上传: {success_count}/{total_count} 篇')
+            print(f'📊 成功率: {success_count/total_count*100:.1f}%' if total_count > 0 else '📊 成功率: 0%')
             
         except Exception as e:
             print(f'❌ 自动更新执行失败: {e}')
