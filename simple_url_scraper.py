@@ -247,8 +247,20 @@ class SimpleUrlScraper:
     
     def save_as_pdf(self, url: str, output_path: str, max_retries: int = 3) -> bool:
         """
-        保存URL为PDF - 图片加载优化版本，带重试机制
+        保存URL为PDF - 图片加载优化版本，带重试机制和备用方法
         确保所有图片完全加载后再生成PDF
+        """
+        # 首先尝试浏览器方法
+        if self._save_as_pdf_with_browser(url, output_path, max_retries):
+            return True
+        
+        # 浏览器方法失败，尝试备用方法
+        logger.warning("浏览器方法失败，尝试备用PDF生成方法...")
+        return self._save_as_pdf_fallback(url, output_path)
+    
+    def _save_as_pdf_with_browser(self, url: str, output_path: str, max_retries: int = 3) -> bool:
+        """
+        使用浏览器生成PDF的原始方法
         """
         for attempt in range(max_retries):
             try:
@@ -431,7 +443,224 @@ class SimpleUrlScraper:
                         return False
         
         return False
-
+    
+    def _save_as_pdf_fallback(self, url: str, output_path: str) -> bool:
+        """
+        备用PDF生成方法 - 基于HTML内容抓取
+        当浏览器方法失败时使用此方法
+        """
+        try:
+            logger.info("🔄 使用备用方法生成PDF...")
+            
+            # 1. 使用requests获取文章内容
+            article_data = self._extract_wechat_article_by_requests(url)
+            
+            if not article_data or 'error' in article_data:
+                logger.error("无法获取文章内容")
+                return False
+            
+            # 2. 生成HTML内容
+            html_content = self._generate_pdf_html(article_data)
+            
+            # 3. 使用weasyprint生成PDF
+            if self._html_to_pdf_with_weasyprint(html_content, output_path):
+                logger.success(f"✅ 备用方法PDF生成成功: {output_path}")
+                return True
+            
+            # 4. 如果weasyprint失败，尝试使用reportlab
+            if self._html_to_pdf_with_reportlab(article_data, output_path):
+                logger.success(f"✅ 备用方法PDF生成成功: {output_path}")
+                return True
+            
+            logger.error("所有备用PDF生成方法都失败了")
+            return False
+            
+        except Exception as e:
+            logger.error(f"备用PDF生成失败: {e}")
+            return False
+    
+    def _generate_pdf_html(self, article_data: dict) -> str:
+        """
+        生成用于PDF转换的HTML内容
+        """
+        title = article_data.get('title', '微信文章')
+        author = article_data.get('author', '未知作者')
+        publish_date = article_data.get('publish_date', '')
+        content = article_data.get('content', '')
+        
+        # 处理图片URL，转换为绝对路径
+        if isinstance(content, str):
+            # 处理相对路径的图片
+            content = content.replace('data-src="/', 'data-src="https://mp.weixin.qq.com/')
+            content = content.replace('src="/', 'src="https://mp.weixin.qq.com/')
+            content = content.replace('src="//', 'src="https://')
+        
+        html_template = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>{title}</title>
+            <style>
+                @page {{
+                    size: A4;
+                    margin: 1cm;
+                }}
+                body {{
+                    font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 100%;
+                }}
+                .article-header {{
+                    text-align: center;
+                    margin-bottom: 30px;
+                    border-bottom: 2px solid #eee;
+                    padding-bottom: 20px;
+                }}
+                .article-title {{
+                    font-size: 24px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    color: #2c3e50;
+                }}
+                .article-meta {{
+                    color: #666;
+                    font-size: 12px;
+                }}
+                .article-content {{
+                    text-align: justify;
+                }}
+                .article-content img {{
+                    max-width: 100%;
+                    height: auto;
+                    display: block;
+                    margin: 10px auto;
+                }}
+                .article-content p {{
+                    margin: 15px 0;
+                }}
+                .article-content h1, .article-content h2, .article-content h3 {{
+                    color: #2c3e50;
+                    margin: 25px 0 15px 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="article-header">
+                <div class="article-title">{title}</div>
+                <div class="article-meta">
+                    作者: {author} | 发布时间: {publish_date}
+                </div>
+            </div>
+            <div class="article-content">
+                {content}
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html_template
+    
+    def _html_to_pdf_with_weasyprint(self, html_content: str, output_path: str) -> bool:
+        """
+        使用weasyprint将HTML转换为PDF
+        """
+        try:
+            import weasyprint
+            
+            # 创建输出目录
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # 生成PDF
+            html_doc = weasyprint.HTML(string=html_content)
+            html_doc.write_pdf(output_path)
+            
+            logger.info("使用weasyprint生成PDF成功")
+            return True
+            
+        except ImportError:
+            logger.debug("weasyprint未安装，跳过此方法")
+            return False
+        except Exception as e:
+            logger.warning(f"weasyprint生成PDF失败: {e}")
+            return False
+    
+    def _html_to_pdf_with_reportlab(self, article_data: dict, output_path: str) -> bool:
+        """
+        使用reportlab生成简单PDF
+        """
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            import html2text
+            
+            # 创建输出目录
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # 创建PDF文档
+            doc = SimpleDocTemplate(output_path, pagesize=A4)
+            story = []
+            
+            # 获取样式
+            styles = getSampleStyleSheet()
+            
+            # 创建标题样式
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=18,
+                spaceAfter=30,
+                alignment=1  # 居中
+            )
+            
+            # 添加标题
+            title = article_data.get('title', '微信文章')
+            story.append(Paragraph(title, title_style))
+            story.append(Spacer(1, 12))
+            
+            # 添加元信息
+            author = article_data.get('author', '未知作者')
+            publish_date = article_data.get('publish_date', '')
+            meta_text = f"作者: {author} | 发布时间: {publish_date}"
+            story.append(Paragraph(meta_text, styles['Normal']))
+            story.append(Spacer(1, 20))
+            
+            # 处理内容 - 转换HTML为纯文本
+            content = article_data.get('content', '')
+            if content:
+                # 使用html2text转换HTML为纯文本
+                h = html2text.HTML2Text()
+                h.ignore_links = False
+                h.ignore_images = False
+                text_content = h.handle(str(content))
+                
+                # 分段处理
+                paragraphs = text_content.split('\n\n')
+                for para in paragraphs:
+                    para = para.strip()
+                    if para:
+                        story.append(Paragraph(para, styles['Normal']))
+                        story.append(Spacer(1, 12))
+            
+            # 生成PDF
+            doc.build(story)
+            
+            logger.info("使用reportlab生成PDF成功")
+            return True
+            
+        except ImportError:
+            logger.debug("reportlab或html2text未安装，跳过此方法")
+            return False
+        except Exception as e:
+            logger.warning(f"reportlab生成PDF失败: {e}")
+            return False
+    
     def save_as_docx(self, url: str, output_path: str) -> bool:
         """
         保存URL为Word文档 - 完整内容版本
@@ -1095,7 +1324,7 @@ class SimpleUrlScraper:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            return True
+                return True
             
         except Exception as e:
             logger.debug(f"下载图片失败 {img_url}: {e}")
@@ -1108,7 +1337,7 @@ class SimpleUrlScraper:
         try:
             # 递归处理所有内容元素
             self._process_element_to_docx_recursive(doc, content_soup, images)
-                    
+            
         except Exception as e:
             logger.warning(f"内容转换异常: {e}")
             # 降级到纯文本处理

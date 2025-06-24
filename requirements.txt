@@ -10,3 +10,6 @@ undetected-chromedriver
 Pillow
 urllib3
 python-docx
+weasyprint
+reportlab
+html2text
