@@ -406,6 +406,21 @@ class SimpleUrlScraper:
                     else:
                         logger.error(f"保存PDF失败，已重试{max_retries}次: {e}")
                         return False
+                elif "no such window" in str(e) or "target window already closed" in str(e):
+                    logger.warning(f"⚠️ 浏览器窗口意外关闭 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        # 重新初始化浏览器
+                        try:
+                            if self.driver:
+                                self.driver.quit()
+                        except:
+                            pass
+                        self.driver = None
+                        time.sleep(3)  # 等待3秒后重试
+                        continue
+                    else:
+                        logger.error(f"保存PDF失败，浏览器窗口异常已重试{max_retries}次: {e}")
+                        return False
                 else:
                     logger.error(f"保存PDF失败: {e}")
                     if attempt < max_retries - 1:
@@ -1414,6 +1429,9 @@ class SimpleUrlScraper:
             return True
         except Exception as e:
             logger.error(f"等待页面加载时出错: {e}")
+            # 如果是浏览器窗口异常，抛出异常让外层重试逻辑处理
+            if "no such window" in str(e) or "target window already closed" in str(e):
+                raise e
             return False
     
     def _human_like_scroll_and_load(self, target_url: str = None) -> bool:
@@ -1479,6 +1497,9 @@ class SimpleUrlScraper:
             
         except Exception as e:
             logger.warning(f"滚动过程出现异常: {e}")
+            # 如果是浏览器窗口异常，抛出异常让外层重试逻辑处理
+            if "no such window" in str(e) or "target window already closed" in str(e):
+                raise e
             return True  # 即使出错也继续，不影响PDF生成
     
     def _trigger_image_loading(self):
