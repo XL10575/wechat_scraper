@@ -285,138 +285,115 @@ class SimpleUrlScraper:
                         raise
                 
                 # 2. 等待基本内容加载
-                self._wait_for_basic_page_load()
-                
-                # 3. 人类式滚动加载，确保图片完全加载
-                self._human_like_scroll_and_load()
-                
-                # 4. 快速生成PDF（约0.5秒）
-                # 滚动回顶部准备生成PDF
-                self.driver.execute_script("window.scrollTo(0, 0);")
-                time.sleep(0.2)
-                
-                # 注入CSS样式来消除页面边距和优化排版
-                css_style = """
-                <style>
-                    @page {
-                        margin: 0 !important;
-                        padding: 0 !important;
-                        size: A4 !important;
-                    }
-                    
-                    * {
-                        box-sizing: border-box !important;
-                    }
-                    
-                    body, html {
-                        margin: 0 !important;
-                        padding: 0 !important;
-                        width: 100% !important;
-                        max-width: 100% !important;
-                    }
-                    
-                    /* 微信文章内容区域优化 */
-                    #js_content,
-                    .rich_media_content,
-                    .rich_media_area_primary {
-                        margin: 0 !important;
-                        padding: 5px !important;
-                        width: 100% !important;
-                        max-width: 100% !important;
-                    }
-                    
-                    /* 隐藏不需要的元素 */
-                    .rich_media_meta_list,
-                    .rich_media_tool,
-                    .qr_code_pc_outer,
-                    .reward_qrcode_area,
-                    .reward_area,
-                    #js_pc_qr_code_img,
-                    .function_mod,
-                    .profile_container,
-                    .rich_media_global_msg {
-                        display: none !important;
-                    }
-                </style>
-                """
-                
-                # 将CSS样式注入页面
-                self.driver.execute_script(f"""
-                    var style = document.createElement('style');
-                    style.type = 'text/css';
-                    style.innerHTML = `{css_style}`;
-                    document.head.appendChild(style);
-                """)
-                
-                # 等待样式生效
-                time.sleep(0.3)
-                
-                # 创建输出目录
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                
-                # 优化的PDF选项 - 填满页面，消除白边
-                pdf_options = {
-                    'paperFormat': 'A4',
-                    'printBackground': True,
-                    'marginTop': 0,        # 完全消除上边距
-                    'marginBottom': 0,     # 完全消除下边距  
-                    'marginLeft': 0,       # 完全消除左边距
-                    'marginRight': 0,      # 完全消除右边距
-                    'preferCSSPageSize': True,  # 启用CSS页面大小设置
-                    'displayHeaderFooter': False,
-                    # 调整缩放以更好地填满页面
-                    'scale': 1.0,  # 使用100%缩放，配合CSS样式
-                    'landscape': False,
-                    # 新增：优化页面利用率
-                    'transferMode': 'ReturnAsBase64',
-                    'generateTaggedPDF': False  # 简化PDF结构
+            self._wait_for_basic_page_load()
+            
+            # 3. 人类式滚动加载，确保图片完全加载
+            self._human_like_scroll_and_load()
+            
+            # 4. 快速生成PDF（约0.5秒）
+            # 滚动回顶部准备生成PDF
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(0.2)
+            
+            # 注入CSS样式来消除页面边距和优化排版
+            css_style = """
+            <style>
+                @page {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    size: A4 !important;
                 }
                 
-                # 生成PDF
-                pdf_data = self.driver.execute_cdp_cmd('Page.printToPDF', pdf_options)
+                * {
+                    box-sizing: border-box !important;
+                }
                 
-                # 保存PDF文件
-                with open(output_path, 'wb') as f:
-                    f.write(base64.b64decode(pdf_data['data']))
+                body, html {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    width: 100% !important;
+                    max-width: 100% !important;
+                }
                 
-                total_time = time.time() - start_time
-                logger.success(f"PDF保存成功: {output_path}，总耗时: {total_time:.1f}秒")
+                /* 微信文章内容区域优化 */
+                #js_content,
+                .rich_media_content,
+                .rich_media_area_primary {
+                    margin: 0 !important;
+                    padding: 5px !important;
+                    width: 100% !important;
+                    max-width: 100% !important;
+                }
                 
-                # 提示优化后的处理时间
-                if total_time <= 30:
-                    logger.success("✅ PDF生成完成，图片加载优化生效！")
-                else:
-                    logger.info(f"ℹ️ 耗时 {total_time:.1f}秒 - 为确保图片完整加载而增加的时间")
-                
-                return True
-                
-            except Exception as e:
-                if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                    logger.warning(f"⚠️ 网络连接中断 (尝试 {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        # 重新初始化浏览器
-                        try:
-                            if self.driver:
-                                self.driver.quit()
-                        except:
-                            pass
-                        self.driver = None
-                        time.sleep(3)  # 等待3秒后重试
-                        continue
-                    else:
-                        logger.error(f"保存PDF失败，已重试{max_retries}次: {e}")
-                        return False
-                else:
-                    logger.error(f"保存PDF失败: {e}")
-                    if attempt < max_retries - 1:
-                        logger.info(f"尝试重试 ({attempt + 2}/{max_retries})...")
-                        time.sleep(2)
-                        continue
-                    else:
-                        return False
-        
-        return False
-
+                /* 隐藏不需要的元素 */
+                .rich_media_meta_list,
+                .rich_media_tool,
+                .qr_code_pc_outer,
+                .reward_qrcode_area,
+                .reward_area,
+                #js_pc_qr_code_img,
+                .function_mod,
+                .profile_container,
+                .rich_media_global_msg {
+                    display: none !important;
+                }
+            </style>
+            """
+            
+            # 将CSS样式注入页面
+            self.driver.execute_script(f"""
+                var style = document.createElement('style');
+                style.type = 'text/css';
+                style.innerHTML = `{css_style}`;
+                document.head.appendChild(style);
+            """)
+            
+            # 等待样式生效
+            time.sleep(0.3)
+            
+            # 创建输出目录
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # 优化的PDF选项 - 填满页面，消除白边
+            pdf_options = {
+                'paperFormat': 'A4',
+                'printBackground': True,
+                'marginTop': 0,        # 完全消除上边距
+                'marginBottom': 0,     # 完全消除下边距  
+                'marginLeft': 0,       # 完全消除左边距
+                'marginRight': 0,      # 完全消除右边距
+                'preferCSSPageSize': True,  # 启用CSS页面大小设置
+                'displayHeaderFooter': False,
+                # 调整缩放以更好地填满页面
+                'scale': 1.0,  # 使用100%缩放，配合CSS样式
+                'landscape': False,
+                # 新增：优化页面利用率
+                'transferMode': 'ReturnAsBase64',
+                'generateTaggedPDF': False  # 简化PDF结构
+            }
+            
+            # 生成PDF
+            pdf_data = self.driver.execute_cdp_cmd('Page.printToPDF', pdf_options)
+            
+            # 保存PDF文件
+            with open(output_path, 'wb') as f:
+                f.write(base64.b64decode(pdf_data['data']))
+            
+            total_time = time.time() - start_time
+            logger.success(f"PDF保存成功: {output_path}，总耗时: {total_time:.1f}秒")
+            
+            # 提示优化后的处理时间
+            if total_time <= 30:
+                logger.success("✅ PDF生成完成，图片加载优化生效！")
+            else:
+                logger.info(f"ℹ️ 耗时 {total_time:.1f}秒 - 为确保图片完整加载而增加的时间")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"保存PDF失败: {e}")
+            return False
+    
     def save_as_docx(self, url: str, output_path: str) -> bool:
         """
         保存URL为Word文档 - 完整内容版本
