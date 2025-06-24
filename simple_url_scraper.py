@@ -108,9 +108,52 @@ class SimpleUrlScraper:
             chrome_options.add_experimental_option('useAutomationExtension', False)
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             
+            # 使用修复后的Chrome配置
+            chrome_options.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            
+            # 查找正确的ChromeDriver路径
+            import glob
+            import os
+            driver_path = None
+            
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                base_path = ChromeDriverManager().install()
+                base_dir = os.path.dirname(base_path)
+                
+                possible_paths = [
+                    os.path.join(base_dir, "chromedriver.exe"),
+                    os.path.join(base_dir, "chromedriver-win32", "chromedriver.exe"),
+                    base_path if base_path.endswith(".exe") else None
+                ]
+                
+                for path in possible_paths:
+                    if path and os.path.exists(path) and path.endswith(".exe"):
+                        driver_path = path
+                        break
+                
+                if not driver_path:
+                    search_patterns = [
+                        os.path.join(os.path.dirname(base_dir), "**", "chromedriver.exe"),
+                        os.path.join(base_dir, "**", "chromedriver.exe")
+                    ]
+                    
+                    for pattern in search_patterns:
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            driver_path = matches[0]
+                            break
+            except:
+                pass
+            
+            if not driver_path:
+                from webdriver_manager.chrome import ChromeDriverManager
+                driver_path = ChromeDriverManager().install()
+            
             # 创建WebDriver
             logger.info("⚡ 启动Chrome浏览器...")
-            self.driver = webdriver.Chrome(options=chrome_options)
+            service = Service(driver_path)
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
             self.driver.set_page_load_timeout(6)  # 进一步减少超时时间
             self.driver.implicitly_wait(1)  # 进一步减少等待时间
             

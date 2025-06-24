@@ -20,6 +20,11 @@ env:
   FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
   FEISHU_ACCESS_TOKEN: ${{ secrets.FEISHU_ACCESS_TOKEN }}
   FEISHU_REFRESH_TOKEN: ${{ secrets.FEISHU_REFRESH_TOKEN }}
+  FEISHU_SPACE_TOKEN: ${{ secrets.FEISHU_SPACE_TOKEN }}
+  FEISHU_SPACE_ID: ${{ secrets.FEISHU_SPACE_ID }}
+  # 微信登录状态
+  WECHAT_COOKIES_B64: ${{ secrets.WECHAT_COOKIES_B64 }}
+  WECHAT_USER_AGENT: ${{ secrets.WECHAT_USER_AGENT }}
 
 jobs:
   auto-update:
@@ -31,9 +36,9 @@ jobs:
       uses: actions/checkout@v4
       
     - name: 🐍 设置Python环境
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.11'
         cache: 'pip'
         
     - name: 📦 安装依赖
@@ -59,7 +64,7 @@ jobs:
         mkdir -p output/auto_download
         mkdir -p logs
         
-    - name: 🔐 配置飞书认证信息
+    - name: 🔐 配置飞书认证信息和微信登录状态
       run: |
         # 创建飞书OAuth令牌文件
         cat > feishu_oauth_tokens.json << EOF
@@ -73,6 +78,24 @@ jobs:
           "app_id": "${{ secrets.FEISHU_APP_ID }}"
         }
         EOF
+        
+        # 创建微信登录状态文件
+        if [ -n "${{ secrets.WECHAT_COOKIES_B64 }}" ]; then
+          echo "🔐 恢复微信登录状态..."
+          echo "${{ secrets.WECHAT_COOKIES_B64 }}" | base64 -d > wechat_cookies.pkl
+          
+          cat > wechat_session.json << EOF
+        {
+          "user_agent": "${{ secrets.WECHAT_USER_AGENT }}",
+          "timestamp": $(date +%s),
+          "login_success": true,
+          "restored_from_github": true
+        }
+        EOF
+          echo "✅ 微信登录状态已恢复"
+        else
+          echo "⚠️ 未找到微信登录状态，可能需要重新登录"
+        fi
         
         # 创建用户配置文件
         cat > user_feishu_config.json << EOF
@@ -237,7 +260,7 @@ jobs:
         
     - name: 📊 上传执行日志
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: auto-update-logs-${{ github.run_number }}
         path: |
