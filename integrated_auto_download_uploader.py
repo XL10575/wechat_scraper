@@ -10,6 +10,7 @@ import os
 import json
 import time
 import requests
+import argparse
 from pathlib import Path
 from typing import Optional, Dict, List, Union
 from loguru import logger
@@ -21,19 +22,33 @@ from datetime import datetime
 class IntegratedAutoUploader:
     """整合版自动下载上传器"""
     
-    def __init__(self, app_id: str, app_secret: str):
+    def __init__(self, app_id: str = None, app_secret: str = None):
         """初始化整合上传器"""
-        self.app_id = app_id
-        self.app_secret = app_secret
+        # 优先从环境变量获取配置
+        self.app_id = app_id or os.getenv('FEISHU_APP_ID')
+        self.app_secret = app_secret or os.getenv('FEISHU_APP_SECRET')
+        
+        if not self.app_id or not self.app_secret:
+            # 尝试从配置文件读取
+            try:
+                with open('user_feishu_config.json', 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    self.app_id = self.app_id or config.get('app_id')
+                    self.app_secret = self.app_secret or config.get('app_secret')
+            except:
+                pass
+                
+        if not self.app_id or not self.app_secret:
+            raise ValueError("❌ 飞书APP ID和Secret未配置！请设置环境变量或配置文件")
         
         # 初始化飞书客户端
-        self.feishu_client = FeishuUserAPIClient(app_id, app_secret)
+        self.feishu_client = FeishuUserAPIClient(self.app_id, self.app_secret)
         
         # 初始化下载器（延迟加载）
         self.url_scraper = None
         
-        # 配置信息
-        self.space_id = "7511922459407450115"  # 知识库ID
+        # 配置信息 - 优先从环境变量获取
+        self.space_id = os.getenv('FEISHU_SPACE_ID', "7511922459407450115")
         self.parent_wiki_token = "Rkr5w3y8hib7dRk1KpFcMZ7tnGc"  # 目标父页面token
         self.ro_folder_token = "BTZkfStogleXeZdbyH7cEyvdnog"  # RO公众号文章文件夹
         
@@ -46,6 +61,7 @@ class IntegratedAutoUploader:
         self.upload_log = self._load_upload_log()
         
         logger.info("🚀 整合版自动下载上传器初始化完成")
+        logger.info(f"📊 配置信息: Space ID={self.space_id}")
     
     def _load_upload_log(self) -> Dict:
         """加载上传日志"""
@@ -512,51 +528,124 @@ class IntegratedAutoUploader:
         except Exception as e:
             logger.error(f"资源清理时出错: {e}")
 
-
-def test_single_url():
-    """测试单个URL处理"""
-    app_id = "cli_a8c822312a75901c"
-    app_secret = "NDbCyKEwEIA8CZo2KHyqueIOlcafErko"
-    
-    uploader = IntegratedAutoUploader(app_id, app_secret)
-    
-    # 测试URL（请替换为实际的微信文章URL）
-    test_url = "https://mp.weixin.qq.com/s?__biz=MzI0NjAyODI3MQ==&mid=2454598547&idx=1&sn=abc"
-    
-    logger.info("🧪 开始测试单个URL处理...")
-    success = uploader.process_single_url(test_url, "pdf")
-    
-    if success:
-        logger.success("✅ 测试成功!")
-    else:
-        logger.error("❌ 测试失败!")
-    
-    uploader.cleanup()
+def load_urls_from_file(file_path: str) -> List[str]:
+    """从文件加载URL列表"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            urls = [line.strip() for line in f if line.strip()]
+        logger.info(f"📄 从文件加载了 {len(urls)} 个URL: {file_path}")
+        return urls
+    except Exception as e:
+        logger.error(f"❌ 加载URL文件失败: {e}")
+        return []
 
 def main():
-    """主函数 - 可以根据需要修改"""
-    app_id = "cli_a8c822312a75901c"
-    app_secret = "NDbCyKEwEIA8CZo2KHyqueIOlcafErko"
+    """主函数 - 支持命令行参数"""
+    parser = argparse.ArgumentParser(description='整合版自动下载上传工具')
+    parser.add_argument('--input', type=str, help='输入URL文件路径')
+    parser.add_argument('--url', type=str, help='单个URL')
+    parser.add_argument('--format', type=str, default='pdf', choices=['pdf', 'docx'], help='文件格式')
+    parser.add_argument('--delay', type=int, default=3, help='处理间隔（秒）')
+    parser.add_argument('--max-files', type=int, help='最大处理文件数')
+    parser.add_argument('--auto-mode', action='store_true', help='自动模式（从GitHub Actions调用）')
     
-    uploader = IntegratedAutoUploader(app_id, app_secret)
+    args = parser.parse_args()
     
-    # 这里可以根据需要处理URL
-    # 例子：处理单个URL
-    # test_url = "https://mp.weixin.qq.com/s/example"
-    # uploader.process_single_url(test_url, "pdf")
+    # 初始化上传器
+    try:
+        uploader = IntegratedAutoUploader()
+    except Exception as e:
+        logger.error(f"❌ 初始化失败: {e}")
+        return
     
-    # 例子：批量处理URL列表
-    # urls = ["url1", "url2", "url3"]
-    # uploader.process_multiple_urls(urls, "pdf", delay=2)
-    
-    logger.info("整合版自动上传器已准备就绪")
-    logger.info("请根据需要调用相应的处理方法")
-    
-    uploader.cleanup()
+    try:
+        if args.auto_mode:
+            # GitHub Actions自动模式
+            logger.info("🚀 GitHub Actions - RO文章自动更新开始")
+            logger.info("=" * 60)
+            
+            # 检查飞书配置
+            if os.path.exists('user_feishu_config.json'):
+                logger.info("✅ 飞书应用配置已加载")
+            else:
+                logger.error("❌ 飞书配置文件不存在")
+                return
+            
+            # 处理收集到的文章
+            if args.input and os.path.exists(args.input):
+                urls = load_urls_from_file(args.input)
+                if urls:
+                    logger.info(f"📚 步骤3: 处理文章下载上传...")
+                    
+                    # 限制处理数量
+                    if args.max_files and len(urls) > args.max_files:
+                        urls = urls[:args.max_files]
+                        logger.info(f"📊 限制处理数量为: {args.max_files}")
+                    
+                    success_count = 0
+                    for i, url in enumerate(urls, 1):
+                        logger.info(f"📄 处理 {i}/{len(urls)}: {url[:50]}...")
+                        logger.info(f"   URL: {url[:80]}...")
+                        
+                        try:
+                            success = uploader.process_single_url(url, args.format)
+                            if success:
+                                success_count += 1
+                                logger.info(f"   ✅ 上传成功")
+                            else:
+                                logger.info(f"   ❌ 上传失败")
+                        except Exception as e:
+                            logger.error(f"   ❌ 处理出错: {e}")
+                        
+                        # 添加延迟
+                        if i < len(urls):
+                            logger.info(f"   ⏳ 等待 {args.delay} 秒...")
+                            time.sleep(args.delay)
+                    
+                    # 输出统计
+                    success_rate = (success_count / len(urls) * 100) if urls else 0
+                    logger.info(f"📊 处理完成: {success_count}/{len(urls)} 成功")
+                    
+                    # GitHub Actions 输出格式
+                    print(f"🎉 RO自动更新完成！")
+                    print(f"📊 收集文章: {len(urls)} 篇")
+                    print(f"📊 成功上传: {success_count}/{len(urls)} 篇")
+                    print(f"📊 成功率: {success_rate:.1f}%")
+                else:
+                    logger.warning("⚠️ 没有找到要处理的URL")
+            else:
+                logger.error("❌ 输入文件不存在或未指定")
+                
+        elif args.url:
+            # 单个URL处理
+            logger.info(f"🎯 处理单个URL: {args.url}")
+            success = uploader.process_single_url(args.url, args.format)
+            if success:
+                logger.success("✅ 处理成功!")
+            else:
+                logger.error("❌ 处理失败!")
+                
+        elif args.input:
+            # 批量URL处理
+            urls = load_urls_from_file(args.input)
+            if urls:
+                if args.max_files and len(urls) > args.max_files:
+                    urls = urls[:args.max_files]
+                    logger.info(f"📊 限制处理数量为: {args.max_files}")
+                
+                stats = uploader.process_multiple_urls(urls, args.format, args.delay)
+                logger.info("📊 处理完成")
+            else:
+                logger.error("❌ 没有找到要处理的URL")
+        else:
+            # 默认模式
+            logger.info("整合版自动上传器已准备就绪")
+            logger.info("使用 --help 查看可用参数")
+            
+    except Exception as e:
+        logger.error(f"❌ 运行时错误: {e}")
+    finally:
+        uploader.cleanup()
 
 if __name__ == "__main__":
-    # 运行测试
-    # test_single_url()
-    
-    # 或运行主函数
     main() 

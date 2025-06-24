@@ -17,6 +17,15 @@ on:
         default: '30'
         type: string
 
+env:
+  # 飞书API配置
+  FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+  FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+  FEISHU_ACCESS_TOKEN: ${{ secrets.FEISHU_ACCESS_TOKEN }}
+  FEISHU_REFRESH_TOKEN: ${{ secrets.FEISHU_REFRESH_TOKEN }}
+  FEISHU_SPACE_TOKEN: ${{ secrets.FEISHU_SPACE_TOKEN }}
+  FEISHU_SPACE_ID: ${{ secrets.FEISHU_SPACE_ID }}
+
 jobs:
   auto-update:
     runs-on: ubuntu-latest
@@ -30,10 +39,26 @@ jobs:
       with:
         python-version: '3.11'
         
-    - name: Install dependencies
+    - name: Install system dependencies
+      run: |
+        # 安装Chrome浏览器
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        
+        # 安装虚拟显示器
+        sudo apt-get install -y xvfb
+        
+    - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        
+    - name: Setup virtual display
+      run: |
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
         
     - name: Restore WeChat login state
       run: |
@@ -51,7 +76,48 @@ jobs:
         
         echo "✅ 微信登录状态已恢复"
         
+    - name: Setup Feishu configuration
+      run: |
+        # 创建飞书OAuth令牌文件
+        cat > feishu_oauth_tokens.json << EOF
+        {
+          "access_token": "${{ secrets.FEISHU_ACCESS_TOKEN }}",
+          "refresh_token": "${{ secrets.FEISHU_REFRESH_TOKEN }}",
+          "expires_in": 6900,
+          "token_type": "Bearer",
+          "scope": null,
+          "created_at": $(date +%s),
+          "app_id": "${{ secrets.FEISHU_APP_ID }}"
+        }
+        EOF
+        
+        # 创建用户配置文件
+        cat > user_feishu_config.json << EOF
+        {
+          "app_id": "${{ secrets.FEISHU_APP_ID }}",
+          "app_secret": "${{ secrets.FEISHU_APP_SECRET }}",
+          "access_token": "${{ secrets.FEISHU_ACCESS_TOKEN }}",
+          "space_token": "${{ secrets.FEISHU_SPACE_TOKEN }}",
+          "space_id": "${{ secrets.FEISHU_SPACE_ID }}",
+          "space_name": "仙境传说RO新启航公众号文章合集",
+          "api_base": "https://open.feishu.cn/open-apis",
+          "mode": "user_complete",
+          "test_success": true,
+          "test_time": "$(date '+%Y-%m-%d %H:%M:%S')",
+          "capabilities": {
+            "知识库权限": true,
+            "云文档权限": true,
+            "文件上传权限": true,
+            "完整上传流程": true
+          }
+        }
+        EOF
+        
+        echo "✅ 飞书配置已设置"
+        
     - name: Auto collect WeChat articles
+      env:
+        DISPLAY: :99
       run: |
         python -c "
         from headless_wechat_collector import HeadlessWeChatCollector
@@ -134,6 +200,8 @@ jobs:
       
     - name: Process collected articles
       if: steps.collect_articles.outputs.has_articles == 'true'
+      env:
+        DISPLAY: :99
       run: |
         echo "📥 开始处理收集到的文章..."
         

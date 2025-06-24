@@ -52,117 +52,164 @@ class SimpleUrlScraper:
         
         logger.info("简单URL处理工具初始化完成（浏览器将懒加载）")
     
-    def setup_browser(self) -> bool:
-        """
-        设置浏览器 - 高性能优化启动
-        """
+    def setup_browser(self, headless: bool = True) -> Optional[webdriver.Chrome]:
+        """设置Chrome浏览器"""
         try:
             logger.info("🚀 正在快速初始化浏览器...")
             
-            # Chrome选项 - 极速优化模式
+            # Chrome选项配置
             chrome_options = Options()
             
-            if self.headless:
-                chrome_options.add_argument('--headless')
+            # 基础选项
+            if headless:
+                chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-images")
+            chrome_options.add_argument("--disable-javascript")
+            chrome_options.add_argument("--disable-css")
+            chrome_options.add_argument("--window-size=1920,1080")
             
-            # 🆕 极速启动优化参数
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-            chrome_options.add_argument('--disable-extensions')
-            chrome_options.add_argument('--disable-plugins')
-            chrome_options.add_argument('--disable-background-timer-throttling')
-            chrome_options.add_argument('--disable-backgrounding-occluded-windows')
-            chrome_options.add_argument('--disable-renderer-backgrounding')
-            chrome_options.add_argument('--disable-features=TranslateUI')
-            chrome_options.add_argument('--disable-default-apps')
-            
-            # 🆕 新增性能优化选项
-            chrome_options.add_argument('--disable-gpu')  # 禁用GPU加速，减少启动时间
-            chrome_options.add_argument('--disable-software-rasterizer')
-            chrome_options.add_argument('--disable-background-networking')
-            chrome_options.add_argument('--disable-sync')  # 禁用同步
-            chrome_options.add_argument('--disable-translate')
-            chrome_options.add_argument('--disable-ipc-flooding-protection')
-            chrome_options.add_argument('--disable-hang-monitor')
-            chrome_options.add_argument('--disable-prompt-on-repost')
-            chrome_options.add_argument('--disable-domain-reliability')
-            chrome_options.add_argument('--disable-component-update')
-            chrome_options.add_argument('--disable-background-downloads')
-            chrome_options.add_argument('--disable-add-to-shelf')
-            
-            # 内存和网络优化
-            chrome_options.add_argument('--memory-pressure-off')
-            chrome_options.add_argument('--disable-client-side-phishing-detection')
-            chrome_options.add_argument('--disable-component-extensions-with-background-pages')
-            chrome_options.add_argument('--disable-permissions-api')
-            chrome_options.add_argument('--disable-notifications')
+            # GitHub Actions特殊配置
+            if os.getenv('GITHUB_ACTIONS'):
+                logger.info("🔧 检测到GitHub Actions环境，应用特殊配置...")
+                chrome_options.add_argument("--no-first-run")
+                chrome_options.add_argument("--no-default-browser-check")
+                chrome_options.add_argument("--disable-default-apps")
+                chrome_options.add_argument("--disable-background-timer-throttling")
+                chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+                chrome_options.add_argument("--disable-renderer-backgrounding")
+                chrome_options.add_argument("--disable-features=TranslateUI")
+                chrome_options.add_argument("--disable-ipc-flooding-protection")
+                chrome_options.add_argument("--single-process")
+                chrome_options.add_argument("--remote-debugging-port=9222")
+                
+                # 设置用户数据目录
+                user_data_dir = "/tmp/chrome-user-data"
+                os.makedirs(user_data_dir, exist_ok=True)
+                chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
             
             # 用户代理
-            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            chrome_options.add_argument(f"--user-agent={user_agent}")
             
-            # 窗口大小
-            chrome_options.add_argument('--window-size=1920,1080')
+            # 页面加载策略
+            chrome_options.page_load_strategy = 'eager'
             
-            # 🆕 启动时间优化
+            # 超时设置
+            chrome_options.add_argument("--timeout=30000")
+            
+            # 禁用日志
+            chrome_options.add_argument("--log-level=3")
+            chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
             chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             
-            # 使用修复后的Chrome配置
-            chrome_options.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            # 性能优化
+            prefs = {
+                "profile.default_content_setting_values": {
+                    "images": 2,
+                    "plugins": 2,
+                    "popups": 2,
+                    "geolocation": 2,
+                    "notifications": 2,
+                    "media_stream": 2,
+                },
+                "profile.managed_default_content_settings": {
+                    "images": 2
+                }
+            }
+            chrome_options.add_experimental_option("prefs", prefs)
             
-            # 查找正确的ChromeDriver路径
-            import glob
-            import os
-            driver_path = None
-            
+            # WebDriver Manager配置
+            service = None
             try:
-                from webdriver_manager.chrome import ChromeDriverManager
-                base_path = ChromeDriverManager().install()
-                base_dir = os.path.dirname(base_path)
+                logger.info("⚡ 启动Chrome浏览器...")
                 
-                possible_paths = [
-                    os.path.join(base_dir, "chromedriver.exe"),
-                    os.path.join(base_dir, "chromedriver-win32", "chromedriver.exe"),
-                    base_path if base_path.endswith(".exe") else None
-                ]
-                
-                for path in possible_paths:
-                    if path and os.path.exists(path) and path.endswith(".exe"):
-                        driver_path = path
-                        break
-                
-                if not driver_path:
-                    search_patterns = [
-                        os.path.join(os.path.dirname(base_dir), "**", "chromedriver.exe"),
-                        os.path.join(base_dir, "**", "chromedriver.exe")
+                # 在GitHub Actions环境中，尝试使用系统Chrome
+                if os.getenv('GITHUB_ACTIONS'):
+                    # 检查系统Chrome路径
+                    chrome_paths = [
+                        "/usr/bin/google-chrome",
+                        "/usr/bin/google-chrome-stable",
+                        "/usr/bin/chromium-browser",
+                        "/snap/bin/chromium"
                     ]
                     
-                    for pattern in search_patterns:
-                        matches = glob.glob(pattern, recursive=True)
-                        if matches:
-                            driver_path = matches[0]
+                    chrome_binary = None
+                    for path in chrome_paths:
+                        if os.path.exists(path):
+                            chrome_binary = path
+                            logger.info(f"🔍 找到Chrome二进制文件: {chrome_binary}")
                             break
-            except:
-                pass
-            
-            if not driver_path:
-                from webdriver_manager.chrome import ChromeDriverManager
-                driver_path = ChromeDriverManager().install()
-            
-            # 创建WebDriver
-            logger.info("⚡ 启动Chrome浏览器...")
-            service = Service(driver_path)
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            self.driver.set_page_load_timeout(6)  # 进一步减少超时时间
-            self.driver.implicitly_wait(1)  # 进一步减少等待时间
-            
-            logger.success("✅ 浏览器快速初始化完成")
-            return True
-            
+                    
+                    if chrome_binary:
+                        chrome_options.binary_location = chrome_binary
+                    
+                    # 尝试使用系统chromedriver
+                    chromedriver_paths = [
+                        "/usr/bin/chromedriver",
+                        "/usr/local/bin/chromedriver"
+                    ]
+                    
+                    chromedriver_path = None
+                    for path in chromedriver_paths:
+                        if os.path.exists(path):
+                            chromedriver_path = path
+                            logger.info(f"🔍 找到ChromeDriver: {chromedriver_path}")
+                            break
+                    
+                    if chromedriver_path:
+                        service = Service(chromedriver_path)
+                    else:
+                        # 使用WebDriverManager作为后备
+                        from webdriver_manager.chrome import ChromeDriverManager
+                        service = Service(ChromeDriverManager().install())
+                else:
+                    # 本地环境使用WebDriverManager
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    service = Service(ChromeDriverManager().install())
+                
+                # 创建WebDriver实例
+                if service:
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                else:
+                    driver = webdriver.Chrome(options=chrome_options)
+                
+                # 设置超时
+                driver.set_page_load_timeout(30)
+                driver.implicitly_wait(10)
+                
+                logger.info("✅ Chrome浏览器启动成功")
+                return driver
+                
+            except Exception as e:
+                logger.error(f"浏览器初始化失败: {e}")
+                
+                # 尝试降级方案
+                if not os.getenv('GITHUB_ACTIONS'):
+                    logger.info("🔄 尝试降级方案...")
+                    try:
+                        # 移除一些可能有问题的选项
+                        chrome_options = Options()
+                        chrome_options.add_argument("--headless")
+                        chrome_options.add_argument("--no-sandbox")
+                        chrome_options.add_argument("--disable-dev-shm-usage")
+                        
+                        driver = webdriver.Chrome(options=chrome_options)
+                        driver.set_page_load_timeout(30)
+                        logger.info("✅ 降级方案成功")
+                        return driver
+                    except Exception as e2:
+                        logger.error(f"降级方案也失败: {e2}")
+                
+                return None
+                
         except Exception as e:
-            logger.error(f"浏览器初始化失败: {e}")
-            return False
+            logger.error(f"设置浏览器时出错: {e}")
+            return None
     
     def extract_article_info(self, url: str) -> dict:
         """
@@ -170,7 +217,8 @@ class SimpleUrlScraper:
         """
         try:
             if not self.driver:
-                if not self.setup_browser():
+                self.driver = self.setup_browser(self.headless)
+                if not self.driver:
                     return {"error": "浏览器初始化失败"}
             
             logger.info(f"正在访问URL: {url}")
@@ -206,7 +254,8 @@ class SimpleUrlScraper:
             logger.info(f"正在保存PDF: {url}")
             
             if not self.driver:
-                if not self.setup_browser():
+                self.driver = self.setup_browser(self.headless)
+                if not self.driver:
                     return False
             
             # 1. 访问页面
@@ -396,7 +445,8 @@ class SimpleUrlScraper:
             
             # 确保浏览器已初始化
             if not self.driver:
-                if not self.setup_browser():
+                self.driver = self.setup_browser(self.headless)
+                if not self.driver:
                     return {"error": "浏览器初始化失败"}
             
             # 访问页面
@@ -1790,7 +1840,8 @@ class SimpleUrlScraper:
         """保存完整的HTML文件，包括图片和样式"""
         try:
             if not self.driver:
-                if not self.setup_browser():
+                self.driver = self.setup_browser(self.headless)
+                if not self.driver:
                     return False
             
             logger.info(f"正在保存完整HTML: {url}")
@@ -1873,7 +1924,8 @@ class SimpleUrlScraper:
         """
         try:
             if not self.driver:
-                if not self.setup_browser():
+                self.driver = self.setup_browser(self.headless)
+                if not self.driver:
                     return {"error": "浏览器初始化失败"}
 
             logger.info(f"🚀 开始提取完整文章内容: {url}")
