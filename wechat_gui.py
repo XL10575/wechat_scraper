@@ -165,11 +165,11 @@ class SimplifiedLinkCollector:
             return False
     
     def _wait_for_login(self):
-        """等待登录完成"""
+        """等待登录完成 - 优化版本，减少等待时间"""
         try:
             import time
             
-            for i in range(120):  # 等待最多2分钟
+            for i in range(30):  # 等待最多30秒，从120秒减少
                 try:
                     scan_url = "https://mp.weixin.qq.com/cgi-bin/scanloginqrcode"
                     params = {
@@ -180,7 +180,7 @@ class SimplifiedLinkCollector:
                         'ajax': '1'
                     }
                     
-                    response = self.session.get(scan_url, params=params)
+                    response = self.session.get(scan_url, params=params, timeout=5)  # 添加5秒超时
                     
                     if response.status_code == 200:
                         result = response.json()
@@ -193,9 +193,11 @@ class SimplifiedLinkCollector:
                                 return self._complete_login()
                             elif status == 2:
                                 # 二维码过期
+                                logger.warning("二维码已过期")
                                 return False
                             elif status == 3:
                                 # 取消登录
+                                logger.warning("用户取消登录")
                                 return False
                     
                     time.sleep(1)
@@ -204,6 +206,7 @@ class SimplifiedLinkCollector:
                     logger.warning(f"检查登录状态失败: {e}")
                     time.sleep(1)
             
+            logger.error("登录超时（30秒）")
             return False  # 超时
             
         except Exception as e:
@@ -1657,7 +1660,6 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
         # 确认下载
         result = messagebox.askyesno("确认批量下载", 
                                    f"将要下载 {len(urls)} 篇文章\n\n"
-                                   f"预计耗时: {len(urls) * int(self.delay_var.get())} 秒\n\n"
                                    f"确定要开始批量下载吗？")
         if not result:
             return
@@ -1963,7 +1965,7 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
                             self.log_message(f"下载失败 (尝试 {attempt + 1}): {e}", "WARNING")
                             if attempt < max_retries:
                                 import time
-                                time.sleep(2)  # 重试前等待2秒
+                                time.sleep(1)  # 重试前等待1秒
                     
                     if download_success:
                         success_count += 1

@@ -61,7 +61,7 @@ class WeChatSessionManager:
             
             # 首先访问微信公众号平台以设置正确的域
             driver.get("https://mp.weixin.qq.com/")
-            time.sleep(2)
+            time.sleep(1)
             
             # 加载并应用cookies
             with open(self.cookies_file, 'rb') as f:
@@ -94,7 +94,7 @@ class WeChatSessionManager:
             
             # 刷新页面以应用会话
             driver.refresh()
-            time.sleep(3)
+            time.sleep(1)
             
             return True
             
