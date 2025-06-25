@@ -55,6 +55,12 @@ test_*.py
 *_test.py
 debug_*.py
 
+# PyInstaller构建文件
+*.spec
+build/
+dist/
+WeChat_Article_Scraper_Portable/
+
 # 其他
 .DS_Store
 Thumbs.db 

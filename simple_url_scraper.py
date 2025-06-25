@@ -53,25 +53,45 @@ class SimpleUrlScraper:
         logger.info("简单URL处理工具初始化完成（浏览器将懒加载）")
     
     def setup_browser(self, headless: bool = True) -> Optional[webdriver.Chrome]:
-        """设置Chrome浏览器"""
+        """设置Chrome浏览器 - 针对exe环境优化"""
         try:
-            logger.info("🚀 正在快速初始化浏览器...")
+            logger.info("🚀 正在初始化浏览器（exe优化模式）...")
             
-            # Chrome选项配置
+            # Chrome选项配置 - 针对exe环境优化
             chrome_options = Options()
             
             # 基础选项
             if headless:
-                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--headless=new")  # 使用新的headless模式
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript")
-            chrome_options.add_argument("--disable-css")
             chrome_options.add_argument("--window-size=1920,1080")
+            
+            # 重要：不禁用JavaScript和CSS，验证码需要这些
+            # chrome_options.add_argument("--disable-javascript")  # 注释掉
+            # chrome_options.add_argument("--disable-css")  # 注释掉
+            
+            # 反检测配置 - 针对exe环境
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # 模拟真实浏览器环境
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--allow-running-insecure-content")
+            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+            
+            # exe环境特殊配置
+            import sys
+            if getattr(sys, 'frozen', False):  # 检测是否为exe环境
+                logger.info("🔧 检测到exe环境，应用特殊配置...")
+                chrome_options.add_argument("--disable-logging")
+                chrome_options.add_argument("--disable-gpu-logging")
+                chrome_options.add_argument("--silent")
+                chrome_options.add_argument("--no-first-run")
+                chrome_options.add_argument("--no-default-browser-check")
             
             # GitHub Actions特殊配置
             if os.getenv('GITHUB_ACTIONS'):
@@ -92,33 +112,31 @@ class SimpleUrlScraper:
                 os.makedirs(user_data_dir, exist_ok=True)
                 chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
             
-            # 用户代理
-            user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            # 用户代理 - 使用Windows Chrome
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             chrome_options.add_argument(f"--user-agent={user_agent}")
             
             # 页面加载策略
-            chrome_options.page_load_strategy = 'eager'
+            chrome_options.page_load_strategy = 'normal'  # 改为normal以确保验证码加载
             
             # 超时设置
-            chrome_options.add_argument("--timeout=30000")
+            chrome_options.add_argument("--timeout=60000")  # 延长超时时间
             
-            # 禁用日志
+            # 日志配置
             chrome_options.add_argument("--log-level=3")
-            chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
             
-            # 性能优化
+            # 性能优化 - 但不禁用图片（验证码需要）
             prefs = {
                 "profile.default_content_setting_values": {
-                    "images": 2,
                     "plugins": 2,
                     "popups": 2,
                     "geolocation": 2,
                     "notifications": 2,
                     "media_stream": 2,
                 },
+                # 不禁用图片，验证码需要图片加载
                 "profile.managed_default_content_settings": {
-                    "images": 2
+                    # "images": 2  # 注释掉，允许图片加载
                 }
             }
             chrome_options.add_experimental_option("prefs", prefs)
@@ -179,10 +197,15 @@ class SimpleUrlScraper:
                     driver = webdriver.Chrome(options=chrome_options)
                 
                 # 设置超时
-                driver.set_page_load_timeout(30)
-                driver.implicitly_wait(10)
+                driver.set_page_load_timeout(60)  # 延长页面加载超时
+                driver.implicitly_wait(15)  # 延长隐式等待
                 
-                logger.info("✅ Chrome浏览器启动成功")
+                # 反检测脚本注入
+                driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                driver.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+                driver.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']})")
+                
+                logger.info("✅ Chrome浏览器启动成功（已优化验证码支持）")
                 return driver
                 
             except Exception as e:
@@ -245,420 +268,61 @@ class SimpleUrlScraper:
             logger.error(f"提取文章信息失败: {e}")
             return {"error": f"提取失败: {str(e)}"}
     
-    def save_as_pdf(self, url: str, output_path: str, max_retries: int = 3) -> bool:
+    def save_as_pdf(self, url: str, output_path: str) -> bool:
         """
-        保存URL为PDF - 图片加载优化版本，带重试机制和备用方法
-        确保所有图片完全加载后再生成PDF
-        """
-        # 首先尝试浏览器方法
-        if self._save_as_pdf_with_browser(url, output_path, max_retries):
-            return True
-        
-        # 浏览器方法失败，尝试备用方法
-        logger.warning("浏览器方法失败，尝试备用PDF生成方法...")
-        return self._save_as_pdf_fallback(url, output_path)
-    
-    def _save_as_pdf_with_browser(self, url: str, output_path: str, max_retries: int = 3) -> bool:
-        """
-        使用浏览器生成PDF的原始方法
-        """
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"正在保存PDF: {url} (尝试 {attempt + 1}/{max_retries})")
-                
-                if not self.driver:
-                    self.driver = self.setup_browser(self.headless)
-                    if not self.driver:
-                        return False
-                
-                # 1. 访问页面，添加超时和重试机制
-                start_time = time.time()
-                
-                # 设置页面加载超时
-                self.driver.set_page_load_timeout(60)  # 60秒超时
-                
-                try:
-                    self.driver.get(url)
-                except Exception as e:
-                    if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                        logger.warning(f"⚠️ 网络连接中断 (尝试 {attempt + 1}/{max_retries}): {e}")
-                        if attempt < max_retries - 1:
-                            # 重新初始化浏览器
-                            try:
-                                self.driver.quit()
-                            except:
-                                pass
-                            self.driver = None
-                            time.sleep(2)  # 等待2秒后重试
-                            continue
-                        else:
-                            raise
-                    else:
-                        raise
-                
-                # 2. 等待基本内容加载
-                self._wait_for_basic_page_load()
-                
-                # 3. 人类式滚动加载，确保图片完全加载
-                self._human_like_scroll_and_load()
-                
-                # 4. 快速生成PDF（约0.5秒）
-                # 滚动回顶部准备生成PDF
-                self.driver.execute_script("window.scrollTo(0, 0);")
-                time.sleep(0.2)
-                
-                # 注入CSS样式来消除页面边距和优化排版
-                css_style = """
-                <style>
-                    @page {
-                        margin: 0 !important;
-                        padding: 0 !important;
-                        size: A4 !important;
-                    }
-                    
-                    * {
-                        box-sizing: border-box !important;
-                    }
-                    
-                    body, html {
-                        margin: 0 !important;
-                        padding: 0 !important;
-                        width: 100% !important;
-                        max-width: 100% !important;
-                    }
-                    
-                    /* 微信文章内容区域优化 */
-                    #js_content,
-                    .rich_media_content,
-                    .rich_media_area_primary {
-                        margin: 0 !important;
-                        padding: 5px !important;
-                        width: 100% !important;
-                        max-width: 100% !important;
-                    }
-                    
-                    /* 隐藏不需要的元素 */
-                    .rich_media_meta_list,
-                    .rich_media_tool,
-                    .qr_code_pc_outer,
-                    .reward_qrcode_area,
-                    .reward_area,
-                    #js_pc_qr_code_img,
-                    .function_mod,
-                    .profile_container,
-                    .rich_media_global_msg {
-                        display: none !important;
-                    }
-                </style>
-                """
-                
-                # 将CSS样式注入页面
-                self.driver.execute_script(f"""
-                    var style = document.createElement('style');
-                    style.type = 'text/css';
-                    style.innerHTML = `{css_style}`;
-                    document.head.appendChild(style);
-                """)
-                
-                # 等待样式生效
-                time.sleep(0.3)
-                
-                # 创建输出目录
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                
-                # 优化的PDF选项 - 填满页面，消除白边
-                pdf_options = {
-                    'paperFormat': 'A4',
-                    'printBackground': True,
-                    'marginTop': 0,        # 完全消除上边距
-                    'marginBottom': 0,     # 完全消除下边距  
-                    'marginLeft': 0,       # 完全消除左边距
-                    'marginRight': 0,      # 完全消除右边距
-                    'preferCSSPageSize': True,  # 启用CSS页面大小设置
-                    'displayHeaderFooter': False,
-                    # 调整缩放以更好地填满页面
-                    'scale': 1.0,  # 使用100%缩放，配合CSS样式
-                    'landscape': False,
-                    # 新增：优化页面利用率
-                    'transferMode': 'ReturnAsBase64',
-                    'generateTaggedPDF': False  # 简化PDF结构
-                }
-                
-                # 生成PDF
-                pdf_data = self.driver.execute_cdp_cmd('Page.printToPDF', pdf_options)
-                
-                # 保存PDF文件
-                with open(output_path, 'wb') as f:
-                    f.write(base64.b64decode(pdf_data['data']))
-                
-                total_time = time.time() - start_time
-                logger.success(f"PDF保存成功: {output_path}，总耗时: {total_time:.1f}秒")
-                
-                # 提示优化后的处理时间
-                if total_time <= 30:
-                    logger.success("✅ PDF生成完成，图片加载优化生效！")
-                else:
-                    logger.info(f"ℹ️ 耗时 {total_time:.1f}秒 - 为确保图片完整加载而增加的时间")
-                
-                return True
-                
-            except Exception as e:
-                if "RemoteDisconnected" in str(e) or "Connection aborted" in str(e):
-                    logger.warning(f"⚠️ 网络连接中断 (尝试 {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        # 重新初始化浏览器
-                        try:
-                            if self.driver:
-                                self.driver.quit()
-                        except:
-                            pass
-                        self.driver = None
-                        time.sleep(3)  # 等待3秒后重试
-                        continue
-                    else:
-                        logger.error(f"保存PDF失败，已重试{max_retries}次: {e}")
-                        return False
-                elif "no such window" in str(e) or "target window already closed" in str(e):
-                    logger.warning(f"⚠️ 浏览器窗口意外关闭 (尝试 {attempt + 1}/{max_retries}): {e}")
-                    if attempt < max_retries - 1:
-                        # 重新初始化浏览器
-                        try:
-                            if self.driver:
-                                self.driver.quit()
-                        except:
-                            pass
-                        self.driver = None
-                        time.sleep(3)  # 等待3秒后重试
-                        continue
-                    else:
-                        logger.error(f"保存PDF失败，浏览器窗口异常已重试{max_retries}次: {e}")
-                        return False
-                else:
-                    logger.error(f"保存PDF失败: {e}")
-                    if attempt < max_retries - 1:
-                        logger.info(f"尝试重试 ({attempt + 2}/{max_retries})...")
-                        time.sleep(2)
-                        continue
-                    else:
-                        return False
-        
-        return False
-    
-    def _save_as_pdf_fallback(self, url: str, output_path: str) -> bool:
-        """
-        备用PDF生成方法 - 基于HTML内容抓取
-        当浏览器方法失败时使用此方法
+        保存URL为PDF文件（原始实现，无重试机制）
         """
         try:
-            logger.info("🔄 使用备用方法生成PDF...")
-            
-            # 1. 使用requests获取文章内容
-            article_data = self._extract_wechat_article_by_requests(url)
-            
-            if not article_data or 'error' in article_data:
-                logger.error("无法获取文章内容")
-                return False
-            
-            # 2. 生成HTML内容
-            html_content = self._generate_pdf_html(article_data)
-            
-            # 3. 使用weasyprint生成PDF
-            if self._html_to_pdf_with_weasyprint(html_content, output_path):
-                logger.success(f"✅ 备用方法PDF生成成功: {output_path}")
-                return True
-            
-            # 4. 如果weasyprint失败，尝试使用reportlab
-            if self._html_to_pdf_with_reportlab(article_data, output_path):
-                logger.success(f"✅ 备用方法PDF生成成功: {output_path}")
-                return True
-            
-            logger.error("所有备用PDF生成方法都失败了")
-            return False
-            
-        except Exception as e:
-            logger.error(f"备用PDF生成失败: {e}")
-            return False
-    
-    def _generate_pdf_html(self, article_data: dict) -> str:
-        """
-        生成用于PDF转换的HTML内容
-        """
-        title = article_data.get('title', '微信文章')
-        author = article_data.get('author', '未知作者')
-        publish_date = article_data.get('publish_date', '')
-        content = article_data.get('content', '')
-        
-        # 处理图片URL，转换为绝对路径
-        if isinstance(content, str):
-            # 处理相对路径的图片
-            content = content.replace('data-src="/', 'data-src="https://mp.weixin.qq.com/')
-            content = content.replace('src="/', 'src="https://mp.weixin.qq.com/')
-            content = content.replace('src="//', 'src="https://')
-        
-        html_template = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>{title}</title>
+            logger.info(f"正在保存PDF: {url}")
+            # 1. 使用Selenium加载完整页面内容
+            if not self.driver:
+                self.driver = self.setup_browser(headless=True)
+            self.driver.get(url)
+            time.sleep(2)
+            # 等待页面加载
+            self._wait_for_basic_page_load()
+            self._human_like_scroll_and_load()
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(0.2)
+            # 注入CSS样式
+            css_style = """
             <style>
-                @page {{
-                    size: A4;
-                    margin: 1cm;
-                }}
-                body {{
-                    font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
-                    font-size: 14px;
-                    line-height: 1.6;
-                    color: #333;
-                    max-width: 100%;
-                }}
-                .article-header {{
-                    text-align: center;
-                    margin-bottom: 30px;
-                    border-bottom: 2px solid #eee;
-                    padding-bottom: 20px;
-                }}
-                .article-title {{
-                    font-size: 24px;
-                    font-weight: bold;
-                    margin-bottom: 10px;
-                    color: #2c3e50;
-                }}
-                .article-meta {{
-                    color: #666;
-                    font-size: 12px;
-                }}
-                .article-content {{
-                    text-align: justify;
-                }}
-                .article-content img {{
-                    max-width: 100%;
-                    height: auto;
-                    display: block;
-                    margin: 10px auto;
-                }}
-                .article-content p {{
-                    margin: 15px 0;
-                }}
-                .article-content h1, .article-content h2, .article-content h3 {{
-                    color: #2c3e50;
-                    margin: 25px 0 15px 0;
-                }}
+                @page { margin: 0 !important; padding: 0 !important; size: A4 !important; }
+                * { box-sizing: border-box !important; }
+                body, html { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; }
+                #js_content, .rich_media_content, .rich_media_area_primary { margin: 0 !important; padding: 5px !important; width: 100% !important; max-width: 100% !important; }
+                .rich_media_meta_list, .rich_media_tool, .qr_code_pc_outer, .reward_qrcode_area, .reward_area, #js_pc_qr_code_img, .function_mod, .profile_container, .rich_media_global_msg { display: none !important; }
             </style>
-        </head>
-        <body>
-            <div class="article-header">
-                <div class="article-title">{title}</div>
-                <div class="article-meta">
-                    作者: {author} | 发布时间: {publish_date}
-                </div>
-            </div>
-            <div class="article-content">
-                {content}
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html_template
-    
-    def _html_to_pdf_with_weasyprint(self, html_content: str, output_path: str) -> bool:
-        """
-        使用weasyprint将HTML转换为PDF
-        """
-        try:
-            import weasyprint
-            
-            # 创建输出目录
+            """
+            self.driver.execute_script(f"""
+                var style = document.createElement('style');
+                style.type = 'text/css';
+                style.innerHTML = `{css_style}`;
+                document.head.appendChild(style);
+            """)
+            time.sleep(0.3)
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            # 生成PDF
-            html_doc = weasyprint.HTML(string=html_content)
-            html_doc.write_pdf(output_path)
-            
-            logger.info("使用weasyprint生成PDF成功")
+            pdf_options = {
+                'paperFormat': 'A4',
+                'printBackground': True,
+                'marginTop': 0,
+                'marginBottom': 0,
+                'marginLeft': 0,
+                'marginRight': 0,
+                'preferCSSPageSize': True,
+                'displayHeaderFooter': False,
+                'scale': 1.0,
+                'landscape': False,
+                'transferMode': 'ReturnAsBase64',
+                'generateTaggedPDF': False
+            }
+            pdf_data = self.driver.execute_cdp_cmd('Page.printToPDF', pdf_options)
+            with open(output_path, 'wb') as f:
+                f.write(base64.b64decode(pdf_data['data']))
+            logger.success(f"PDF保存成功: {output_path}")
             return True
-            
-        except ImportError:
-            logger.debug("weasyprint未安装，跳过此方法")
-            return False
         except Exception as e:
-            logger.warning(f"weasyprint生成PDF失败: {e}")
-            return False
-    
-    def _html_to_pdf_with_reportlab(self, article_data: dict, output_path: str) -> bool:
-        """
-        使用reportlab生成简单PDF
-        """
-        try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            import html2text
-            
-            # 创建输出目录
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            
-            # 创建PDF文档
-            doc = SimpleDocTemplate(output_path, pagesize=A4)
-            story = []
-            
-            # 获取样式
-            styles = getSampleStyleSheet()
-            
-            # 创建标题样式
-            title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Heading1'],
-                fontSize=18,
-                spaceAfter=30,
-                alignment=1  # 居中
-            )
-            
-            # 添加标题
-            title = article_data.get('title', '微信文章')
-            story.append(Paragraph(title, title_style))
-            story.append(Spacer(1, 12))
-            
-            # 添加元信息
-            author = article_data.get('author', '未知作者')
-            publish_date = article_data.get('publish_date', '')
-            meta_text = f"作者: {author} | 发布时间: {publish_date}"
-            story.append(Paragraph(meta_text, styles['Normal']))
-            story.append(Spacer(1, 20))
-            
-            # 处理内容 - 转换HTML为纯文本
-            content = article_data.get('content', '')
-            if content:
-                # 使用html2text转换HTML为纯文本
-                h = html2text.HTML2Text()
-                h.ignore_links = False
-                h.ignore_images = False
-                text_content = h.handle(str(content))
-                
-                # 分段处理
-                paragraphs = text_content.split('\n\n')
-                for para in paragraphs:
-                    para = para.strip()
-                    if para:
-                        story.append(Paragraph(para, styles['Normal']))
-                        story.append(Spacer(1, 12))
-            
-            # 生成PDF
-            doc.build(story)
-            
-            logger.info("使用reportlab生成PDF成功")
-            return True
-            
-        except ImportError:
-            logger.debug("reportlab或html2text未安装，跳过此方法")
-            return False
-        except Exception as e:
-            logger.warning(f"reportlab生成PDF失败: {e}")
+            logger.error(f"保存PDF失败: {e}")
             return False
     
     def save_as_docx(self, url: str, output_path: str) -> bool:
@@ -707,22 +371,63 @@ class SimpleUrlScraper:
             
             # 6. 处理HTML内容，确保所有信息都包含
             content_soup = article_data.get('content_soup')
+            images = article_data.get('images', [])
+            
             if content_soup:
-                self._process_wechat_content_to_docx(doc, content_soup, article_data.get('images', []))
+                logger.info(f"🔄 开始处理文档内容，包含 {len(images)} 张图片")
+                try:
+                    # 添加超时保护的内容处理
+                    import signal
+                    
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError("文档处理超时")
+                    
+                    # 设置30秒超时
+                    if hasattr(signal, 'SIGALRM'):  # Unix系统
+                        signal.signal(signal.SIGALRM, timeout_handler)
+                        signal.alarm(30)
+                    
+                    self._process_wechat_content_to_docx(doc, content_soup, images)
+                    
+                    if hasattr(signal, 'SIGALRM'):
+                        signal.alarm(0)  # 取消超时
+                        
+                except TimeoutError:
+                    logger.warning("⏰ 文档处理超时，使用简化处理")
+                    # 降级到简单文本处理
+                    text_content = content_soup.get_text(strip=True)
+                    if text_content:
+                        doc.add_paragraph(text_content[:5000])  # 限制长度
+                except Exception as e:
+                    logger.warning(f"⚠️ 内容处理异常: {e}，使用简化处理")
+                    # 降级到简单文本处理
+                    try:
+                        text_content = content_soup.get_text(strip=True)
+                        if text_content:
+                            doc.add_paragraph(text_content[:5000])  # 限制长度
+                    except:
+                        doc.add_paragraph("内容提取失败")
             else:
                 logger.warning("没有找到文章内容")
                 doc.add_paragraph("未能提取到文章内容")
             
-            # 7. 保存文档
-            doc.save(output_path)
+            # 7. 确保输出目录存在
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            logger.success(f"Word文档保存成功: {output_path}")
-            logger.info(f"包含 {len(article_data.get('images', []))} 张图片")
-            
-            return True
+            # 8. 保存文档
+            try:
+                doc.save(output_path)
+                logger.success(f"Word文档保存成功: {output_path}")
+                logger.info(f"📊 统计信息: 图片={len(images)}张, 文件大小={os.path.getsize(output_path)/1024:.1f}KB")
+                return True
+            except Exception as e:
+                logger.error(f"保存Word文档文件失败: {e}")
+                return False
             
         except Exception as e:
             logger.error(f"保存Word文档失败: {e}")
+            import traceback
+            logger.debug(f"详细错误信息: {traceback.format_exc()}")
             return False
     
     def _extract_wechat_article_with_selenium(self, url: str) -> dict:
@@ -748,6 +453,11 @@ class SimpleUrlScraper:
                 logger.debug("✅ 页面基础框架加载完成")
             except TimeoutException:
                 logger.warning("⏰ 页面加载超时，尝试继续")
+            
+            # 处理验证码（如果存在）
+            if not self._handle_captcha_if_present():
+                logger.error("❌ 验证码处理失败")
+                return {"error": "验证码处理失败"}
             
             # 等待内容加载
             self._wait_for_basic_page_load()
@@ -958,7 +668,7 @@ class SimpleUrlScraper:
             return None
     
     def _download_images_from_selenium_soup(self, content_soup: BeautifulSoup, base_url: str) -> list:
-        """从Selenium渲染的页面中下载图片"""
+        """从Selenium渲染的页面中下载图片（优化版）"""
         try:
             images_info = []
             img_tags = content_soup.find_all('img')
@@ -976,7 +686,11 @@ class SimpleUrlScraper:
             img_dir = os.path.join("output", "images", safe_domain)
             os.makedirs(img_dir, exist_ok=True)
             
-            for i, img in enumerate(img_tags):
+            # 限制同时下载的图片数量，避免卡住
+            max_images = min(len(img_tags), 20)  # 最多下载20张图片
+            successful_downloads = 0
+            
+            for i, img in enumerate(img_tags[:max_images]):
                 try:
                     # 从Selenium加载的页面中，src应该已经被完全解析
                     img_src = img.get('src') or img.get('data-src') or img.get('data-original')
@@ -991,41 +705,101 @@ class SimpleUrlScraper:
                     elif not img_src.startswith('http'):
                         img_src = urllib.parse.urljoin(base_url, img_src)
                     
-                    # 跳过过小的图片（可能是图标）
-                    if 'icon' in img_src.lower() or 'logo' in img_src.lower():
+                    # 跳过过小的图片（可能是图标）或base64图片
+                    if ('icon' in img_src.lower() or 
+                        'logo' in img_src.lower() or 
+                        img_src.startswith('data:') or
+                        len(img_src) > 1000):  # 跳过超长URL
                         continue
                     
                     # 生成本地文件名
                     img_filename = f"img_{i+1:03d}.jpg"
                     img_path = os.path.join(img_dir, img_filename)
                     
-                    # 下载图片
-                    if self._download_image_requests(img_src, img_path):
+                    # 下载图片（带超时控制）
+                    download_success = self._download_image_with_timeout(img_src, img_path, timeout=10)
+                    
+                    if download_success:
                         images_info.append({
                             'url': img_src,
                             'local_path': img_path,
                             'filename': img_filename
                         })
+                        successful_downloads += 1
                         logger.debug(f"📷 下载图片成功: {img_filename}")
                     else:
+                        # 即使下载失败，也记录图片信息，但local_path为None
                         images_info.append({
                             'url': img_src,
                             'local_path': None,
                             'filename': img_filename
                         })
-                        logger.warning(f"📷 下载图片失败: {img_src}")
+                        logger.debug(f"📷 下载图片失败: {img_src[:50]}...")
                 
                 except Exception as e:
-                    logger.warning(f"处理图片时出错: {e}")
+                    logger.debug(f"处理图片时出错: {e}")
                     continue
             
-            logger.success(f"🖼️ 图片下载完成: {len([img for img in images_info if img['local_path']])}/{len(img_tags)}")
+            logger.info(f"🖼️ 图片下载完成: {successful_downloads}/{max_images} 张成功")
             return images_info
             
         except Exception as e:
-            logger.error(f"图片下载异常: {e}")
+            logger.warning(f"图片下载过程异常: {e}")
             return []
 
+    def _download_image_with_timeout(self, img_url: str, save_path: str, timeout: int = 10) -> bool:
+        """带超时控制的图片下载"""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://mp.weixin.qq.com/',
+                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+            }
+            
+            # 使用较短的超时时间
+            response = requests.get(img_url, headers=headers, timeout=timeout, stream=True)
+            response.raise_for_status()
+            
+            # 检查内容类型
+            content_type = response.headers.get('content-type', '').lower()
+            if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'jpg', 'png', 'gif', 'webp']):
+                logger.debug(f"非图片内容类型: {content_type}")
+                return False
+            
+            # 检查文件大小，避免下载过大的文件
+            content_length = response.headers.get('content-length')
+            if content_length and int(content_length) > 10 * 1024 * 1024:  # 10MB限制
+                logger.debug(f"图片文件过大: {content_length} bytes")
+                return False
+            
+            # 写入文件
+            with open(save_path, 'wb') as f:
+                downloaded_size = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+                        # 限制下载大小
+                        if downloaded_size > 10 * 1024 * 1024:  # 10MB限制
+                            logger.debug("下载文件过大，停止下载")
+                            return False
+            
+            # 验证文件是否成功下载
+            if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+                return True
+            else:
+                return False
+            
+        except requests.exceptions.Timeout:
+            logger.debug(f"图片下载超时: {img_url}")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.debug(f"图片下载网络错误: {e}")
+            return False
+        except Exception as e:
+            logger.debug(f"图片下载异常: {e}")
+            return False
+    
     def _extract_wechat_article_by_requests(self, url: str) -> dict:
         """
         使用Requests获取微信文章内容
@@ -1184,7 +958,7 @@ class SimpleUrlScraper:
             for script in scripts:
                 if script.string and 'publish_time' in script.string:
                     import re
-                    match = re.search(r'publish_time["\s]*[=:]["\s]*"([^"]+)"', script.string)
+                    match = re.search(r'publish_time["\s]*[=:]["\s]*("[^"]+)"', script.string)
                     if match:
                         return match.group(1)
             
@@ -1324,7 +1098,7 @@ class SimpleUrlScraper:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-                return True
+            return True
             
         except Exception as e:
             logger.debug(f"下载图片失败 {img_url}: {e}")
@@ -1335,9 +1109,9 @@ class SimpleUrlScraper:
         将微信文章内容转换为Word文档，确保内容完整性
         """
         try:
-            # 递归处理所有内容元素
-            self._process_element_to_docx_recursive(doc, content_soup, images)
-            
+            # 递归处理所有内容元素，添加深度限制
+            self._process_element_to_docx_recursive(doc, content_soup, images, depth=0, max_depth=10)
+                    
         except Exception as e:
             logger.warning(f"内容转换异常: {e}")
             # 降级到纯文本处理
@@ -1348,11 +1122,16 @@ class SimpleUrlScraper:
             except:
                 doc.add_paragraph("内容提取失败")
     
-    def _process_element_to_docx_recursive(self, doc, element, images: list):
+    def _process_element_to_docx_recursive(self, doc, element, images: list, depth: int = 0, max_depth: int = 10):
         """
-        递归处理HTML元素到Word文档
+        递归处理HTML元素到Word文档（带深度限制）
         """
         try:
+            # 防止无限递归
+            if depth > max_depth:
+                logger.warning(f"递归深度超限 ({depth})，停止处理")
+                return
+                
             if hasattr(element, 'name'):
                 tag_name = element.name.lower() if element.name else None
                 
@@ -1376,8 +1155,14 @@ class SimpleUrlScraper:
                         self._add_formatted_text_to_paragraph(paragraph, element, images)
                     else:
                         # 长内容，递归处理子元素
-                        for child in element.children:
-                            self._process_element_to_docx_recursive(doc, child, images)
+                        if hasattr(element, 'children'):
+                            child_count = 0
+                            for child in element.children:
+                                child_count += 1
+                                if child_count > 50:  # 限制子元素数量
+                                    logger.warning("子元素过多，停止处理")
+                                    break
+                                self._process_element_to_docx_recursive(doc, child, images, depth + 1, max_depth)
                     
                 elif tag_name == 'img':
                     # 图片处理
@@ -1394,7 +1179,7 @@ class SimpleUrlScraper:
                             
                 elif tag_name in ['ul', 'ol']:
                     # 列表处理
-                    items = element.find_all('li')
+                    items = element.find_all('li')[:20]  # 限制列表项数量
                     for item in items:
                         text = item.get_text(strip=True)
                         if text:
@@ -1411,17 +1196,30 @@ class SimpleUrlScraper:
                 else:
                     # 其他元素，递归处理子元素
                     if hasattr(element, 'children'):
+                        child_count = 0
                         for child in element.children:
-                            self._process_element_to_docx_recursive(doc, child, images)
+                            child_count += 1
+                            if child_count > 50:  # 限制子元素数量
+                                logger.warning("子元素过多，停止处理")
+                                break
+                            self._process_element_to_docx_recursive(doc, child, images, depth + 1, max_depth)
             else:
                 # 文本节点
                 if hasattr(element, 'strip'):
                     text_content = str(element).strip()
-                    if text_content and len(text_content) > 0:
+                    if text_content and len(text_content) > 0 and len(text_content) < 1000:  # 限制文本长度
                         doc.add_paragraph(text_content)
                     
         except Exception as e:
-            logger.debug(f"处理元素异常: {e}")
+            logger.debug(f"处理元素异常 (深度{depth}): {e}")
+            # 异常时添加简单文本内容
+            try:
+                if hasattr(element, 'get_text'):
+                    text = element.get_text(strip=True)
+                    if text and len(text) < 500:
+                        doc.add_paragraph(text)
+            except:
+                pass
     
     def _process_paragraph_to_docx(self, doc, p_element, images: list):
         """处理段落元素"""
@@ -1494,7 +1292,7 @@ class SimpleUrlScraper:
             logger.debug(f"添加格式化文本异常: {e}")
     
     def _add_image_to_docx_new(self, doc, img_element, images: list, inline: bool = False):
-        """添加图片到Word文档（新版本）"""
+        """添加图片到Word文档（优化版）"""
         try:
             img_src = img_element.get('src') or img_element.get('data-src') or img_element.get('data-original')
             if not img_src:
@@ -1507,25 +1305,72 @@ class SimpleUrlScraper:
                     local_image = img_info
                     break
             
-            if local_image and local_image.get('local_path') and os.path.exists(local_image['local_path']):
-                try:
-                    if inline:
-                        # 内联图片，添加到当前段落
-                        doc.add_picture(local_image['local_path'], width=Inches(4))
-                    else:
-                        # 单独段落图片
-                        doc.add_picture(local_image['local_path'], width=Inches(5))
-                    logger.debug(f"添加图片成功: {local_image['local_path']}")
-                except Exception as e:
-                    logger.warning(f"图片添加失败: {e}")
+            if local_image and local_image.get('local_path'):
+                local_path = local_image['local_path']
+                
+                # 验证文件是否存在且有效
+                if not os.path.exists(local_path):
+                    logger.debug(f"图片文件不存在: {local_path}")
                     if not inline:
                         doc.add_paragraph(f"[图片: {img_src}]")
+                    return
+                
+                # 检查文件大小
+                try:
+                    file_size = os.path.getsize(local_path)
+                    if file_size == 0:
+                        logger.debug(f"图片文件为空: {local_path}")
+                        if not inline:
+                            doc.add_paragraph(f"[图片: {img_src}]")
+                        return
+                    elif file_size > 5 * 1024 * 1024:  # 5MB限制
+                        logger.debug(f"图片文件过大: {file_size} bytes")
+                        if not inline:
+                            doc.add_paragraph(f"[图片过大: {img_src}]")
+                        return
+                except OSError:
+                    logger.debug(f"无法获取图片文件大小: {local_path}")
+                    if not inline:
+                        doc.add_paragraph(f"[图片: {img_src}]")
+                    return
+                
+                # 尝试插入图片
+                try:
+                    # 验证图片格式
+                    valid_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp')
+                    if not any(local_path.lower().endswith(ext) for ext in valid_extensions):
+                        # 尝试重命名为.jpg
+                        new_path = local_path.rsplit('.', 1)[0] + '.jpg'
+                        if os.path.exists(local_path):
+                            try:
+                                os.rename(local_path, new_path)
+                                local_path = new_path
+                            except:
+                                pass
+                    
+                    # 设置图片大小
+                    if inline:
+                        # 内联图片，较小尺寸
+                        doc.add_picture(local_path, width=Inches(3))
+                    else:
+                        # 独立段落图片，较大尺寸
+                        doc.add_picture(local_path, width=Inches(4.5))
+                    
+                    logger.debug(f"✅ 图片插入成功: {os.path.basename(local_path)}")
+                    
+                except Exception as img_error:
+                    logger.debug(f"图片插入失败 {local_path}: {img_error}")
+                    # 降级处理：添加图片链接文本
+                    if not inline:
+                        doc.add_paragraph(f"[图片链接: {img_src}]")
             else:
+                # 没有本地图片文件，添加链接文本
                 if not inline:
                     doc.add_paragraph(f"[图片链接: {img_src}]")
                 
         except Exception as e:
             logger.debug(f"图片处理异常: {e}")
+            # 静默失败，不影响整体文档生成
     
     def _process_html_to_docx(self, doc, html_content: str, images: list):
         """
@@ -1627,6 +1472,90 @@ class SimpleUrlScraper:
         except Exception as e:
             logger.debug(f"图片处理异常: {e}")
     
+    def _handle_captcha_if_present(self) -> bool:
+        """处理验证码（如果存在）"""
+        try:
+            logger.info("🔍 检查是否存在验证码...")
+            
+            # 等待页面稳定
+            time.sleep(3)
+            
+            # 检查常见的验证码元素
+            captcha_selectors = [
+                "iframe[src*='captcha']",
+                "div[class*='captcha']",
+                "div[id*='captcha']",
+                ".captcha-container",
+                "#captcha",
+                "iframe[src*='verify']",
+                "div[class*='verify']",
+                "canvas[id*='captcha']",
+                "img[src*='captcha']"
+            ]
+            
+            captcha_found = False
+            for selector in captcha_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        logger.warning(f"🎯 发现验证码元素: {selector}")
+                        captcha_found = True
+                        break
+                except:
+                    continue
+            
+            if captcha_found:
+                logger.warning("⚠️ 检测到验证码，切换到非headless模式以便手动处理")
+                
+                # 如果是headless模式，提示用户
+                if self.headless:
+                    logger.error("❌ 检测到验证码但当前为headless模式，请使用GUI模式运行程序")
+                    return False
+                
+                # 等待用户处理验证码
+                logger.info("🖱️ 请在浏览器中完成验证码验证...")
+                logger.info("⏳ 程序将等待60秒供您完成验证...")
+                
+                # 等待验证码消失或页面跳转
+                for i in range(60):
+                    time.sleep(1)
+                    try:
+                        # 检查验证码是否还存在
+                        still_has_captcha = False
+                        for selector in captcha_selectors:
+                            try:
+                                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                                if elements and elements[0].is_displayed():
+                                    still_has_captcha = True
+                                    break
+                            except:
+                                continue
+                        
+                        if not still_has_captcha:
+                            logger.info("✅ 验证码已完成，继续处理...")
+                            return True
+                            
+                        # 检查是否已经跳转到文章页面
+                        if "mp.weixin.qq.com/s" in self.driver.current_url:
+                            article_title = self.driver.find_elements(By.CSS_SELECTOR, "#activity-name, .rich_media_title")
+                            if article_title:
+                                logger.info("✅ 已成功跳转到文章页面")
+                                return True
+                                
+                    except Exception as e:
+                        logger.debug(f"验证码检查异常: {e}")
+                        continue
+                
+                logger.error("⏰ 验证码处理超时，请重试")
+                return False
+            else:
+                logger.info("✅ 未检测到验证码")
+                return True
+                
+        except Exception as e:
+            logger.error(f"验证码处理异常: {e}")
+            return True  # 继续执行，可能没有验证码
+
     def _wait_for_basic_page_load(self) -> bool:
         """
         等待页面基础内容加载 - 优化版本
@@ -1658,35 +1587,46 @@ class SimpleUrlScraper:
             return True
         except Exception as e:
             logger.error(f"等待页面加载时出错: {e}")
-            # 如果是浏览器窗口异常，抛出异常让外层重试逻辑处理
-            if "no such window" in str(e) or "target window already closed" in str(e):
-                raise e
             return False
     
     def _human_like_scroll_and_load(self, target_url: str = None) -> bool:
         """
-        人类式滚动加载内容 - 优化图片加载版本
-        确保充分的滚动时间和图片加载
+        人类式滚动加载内容 - 优化版本（减少重复滚动）
         """
         try:
             # 获取页面总高度
             total_height = self.driver.execute_script("return document.body.scrollHeight")
-            logger.info(f"模仿人类阅读行为，滚动加载内容...")
+            logger.info(f"开始智能滚动加载，页面高度: {total_height}px")
             
             # 如果页面很短，直接返回
             if total_height <= 1000:
-                logger.debug("页面较短，无需详细滚动")
+                logger.debug("页面较短，无需滚动")
                 return True
             
-            # 计算滚动步数：每600像素一个位置，提高下载速度
-            pixels_per_step = 600  # 从300增加到600，提高下载速度
-            scroll_positions = max(5, (total_height // pixels_per_step) + 1)
+            # 根据页面高度动态调整滚动策略
+            if total_height <= 3000:
+                # 短页面：快速滚动
+                pixels_per_step = 800
+                scroll_delay = 1.0
+                check_frequency = 3
+            elif total_height <= 8000:
+                # 中等页面：平衡滚动
+                pixels_per_step = 1000
+                scroll_delay = 1.2
+                check_frequency = 4
+            else:
+                # 长页面：大步滚动
+                pixels_per_step = 1500
+                scroll_delay = 1.5
+                check_frequency = 5
             
-            # 适当减少滚动延迟，配合更大的滚动步长
-            scroll_delay = 1.5  # 从2.0秒减少到1.5秒，平衡速度和图片加载
+            # 计算滚动步数
+            scroll_positions = max(3, (total_height // pixels_per_step) + 1)
+            scroll_positions = min(scroll_positions, 8)  # 最多8个位置，避免过度滚动
             
-            logger.info(f"页面高度: {total_height}px, 计划滚动 {scroll_positions} 个位置")
+            logger.info(f"滚动策略: {scroll_positions}步, 每步{pixels_per_step}px, 延迟{scroll_delay}s")
             
+            # 执行滚动
             for i in range(scroll_positions):
                 # 计算滚动位置
                 if scroll_positions == 1:
@@ -1698,38 +1638,35 @@ class SimpleUrlScraper:
                 logger.debug(f"滚动到位置 {i+1}/{scroll_positions}: {scroll_to}px")
                 
                 # 平滑滚动到目标位置
-                self.driver.execute_script(f"window.scrollTo(0, {scroll_to});")
+                self.driver.execute_script(f"window.scrollTo({{top: {scroll_to}, behavior: 'smooth'}});")
                 
-                # 等待页面内容和图片加载
+                # 等待内容加载
                 time.sleep(scroll_delay)
                 
-                # 在中间位置额外检查图片加载
-                if i % 4 == 0:  # 每4个位置检查一次（从每3个改为每4个，减少检查频率）
+                # 减少图片检查频率
+                if i % check_frequency == 0:
                     self._trigger_image_loading()
-                    time.sleep(0.8)  # 从1.0秒减少到0.8秒，加快处理速度
+                    time.sleep(0.5)
             
-            # 滚动回顶部
-            logger.info("滚动回顶部...")
-            self.driver.execute_script("window.scrollTo(0, 0);")
+            # 最终处理：快速滚动到底部
+            logger.info("最终处理...")
+            self.driver.execute_script("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});")
+            time.sleep(1.5)
+            
+            # 最后一次图片检查
+            self._trigger_image_loading()
             time.sleep(1.0)
             
-            # 最终快速浏览，确保所有内容已加载
-            logger.info("最终快速浏览...")
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2.0)
+            # 回到顶部
+            self.driver.execute_script("window.scrollTo({top: 0, behavior: 'smooth'});")
+            time.sleep(0.5)
             
-            # 最终检查所有图片
-            self._final_image_check()
-            
-            logger.success("人类式阅读滚动完成")
+            logger.success("智能滚动完成")
             return True
             
         except Exception as e:
-            logger.warning(f"滚动过程出现异常: {e}")
-            # 如果是浏览器窗口异常，抛出异常让外层重试逻辑处理
-            if "no such window" in str(e) or "target window already closed" in str(e):
-                raise e
-            return True  # 即使出错也继续，不影响PDF生成
+            logger.warning(f"滚动过程异常: {e}")
+            return True  # 即使出错也继续，不影响内容提取
     
     def _trigger_image_loading(self):
         """触发图片懒加载"""
@@ -2132,78 +2069,176 @@ class SimpleUrlScraper:
             self.driver = None
     
     def save_complete_html(self, url: str, output_path: str) -> bool:
-        """保存完整的HTML文件，包括图片和样式"""
+        """保存完整的HTML文件，包括图片和样式（修复版）"""
         try:
-            if not self.driver:
-                self.driver = self.setup_browser(self.headless)
-                if not self.driver:
-                    return False
-            
             logger.info(f"正在保存完整HTML: {url}")
             
-            # 访问URL
-            self.driver.get(url)
-            time.sleep(2)  # 减少等待时间
+            # 使用已有的文章提取方法，避免重复滚动
+            article_data = self._extract_wechat_article_with_selenium(url)
             
-            # 等待页面基础内容加载
-            self._wait_for_basic_page_load()
-            
-            # 快速滚动加载
-            self._human_like_scroll_and_load()
-            
-            # 获取页面源码
-            page_source = self.driver.page_source
+            if not article_data or 'error' in article_data:
+                logger.error("无法获取文章内容")
+                return False
             
             # 创建输出目录
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            # 解析HTML并下载图片
-            soup = BeautifulSoup(page_source, 'html.parser')
+            # 获取文章信息
+            title = article_data.get('title', '未知标题')
+            author = article_data.get('author', '未知作者')
+            publish_date = article_data.get('publish_date', '未知时间')
+            content_soup = article_data.get('content_soup')
+            images = article_data.get('images', [])
             
-            # 获取文章标题作为文件夹名
-            title = self._get_article_title(soup)
-            base_dir = os.path.dirname(output_path)
-            article_dir = os.path.join(base_dir, f"images_{title[:20]}")
-            os.makedirs(article_dir, exist_ok=True)
+            if not content_soup:
+                logger.error("没有找到文章内容")
+                return False
             
-            # 下载并替换图片链接
-            img_count = 0
-            for img in soup.find_all('img'):
-                img_src = img.get('src') or img.get('data-src')
-                if img_src:
-                    try:
-                        # 下载图片
-                        img_filename = f"image_{img_count:03d}.jpg"
-                        img_path = os.path.join(article_dir, img_filename)
-                        
-                        if self._download_image(img_src, img_path):
-                            # 替换为本地路径
-                            relative_path = f"images_{title[:20]}/{img_filename}"
-                            img['src'] = relative_path
-                            img_count += 1
-                        
-                    except Exception as e:
-                        logger.debug(f"下载图片失败: {e}")
+            # 创建完整的HTML文档
+            html_doc = BeautifulSoup('<!DOCTYPE html><html><head></head><body></body></html>', 'html.parser')
             
-            # 添加CSS样式保持原始格式
-            style_tag = soup.new_tag('style')
+            # 设置HTML头部
+            html_doc.head.append(html_doc.new_tag('meta', charset='utf-8'))
+            html_doc.head.append(html_doc.new_tag('meta', attrs={'name': 'viewport', 'content': 'width=device-width, initial-scale=1.0'}))
+            
+            title_tag = html_doc.new_tag('title')
+            title_tag.string = title
+            html_doc.head.append(title_tag)
+            
+            # 添加CSS样式
+            style_tag = html_doc.new_tag('style')
             style_tag.string = """
-                body { max-width: 100%; margin: 0 auto; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-                img { max-width: 100%; height: auto; }
-                .rich_media_content { max-width: 100%; }
+                body { 
+                    max-width: 800px; 
+                    margin: 0 auto; 
+                    padding: 20px; 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; 
+                    line-height: 1.6;
+                    color: #333;
+                }
+                .article-header {
+                    text-align: center;
+                    margin-bottom: 30px;
+                    padding-bottom: 20px;
+                    border-bottom: 1px solid #eee;
+                }
+                .article-title {
+                    font-size: 24px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    color: #2c3e50;
+                }
+                .article-meta {
+                    color: #666;
+                    font-size: 14px;
+                }
+                .article-content {
+                    font-size: 16px;
+                    line-height: 1.8;
+                }
+                img { 
+                    max-width: 100%; 
+                    height: auto; 
+                    display: block;
+                    margin: 15px auto;
+                    border-radius: 4px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                p { margin: 15px 0; }
+                blockquote {
+                    border-left: 4px solid #3498db;
+                    margin: 20px 0;
+                    padding-left: 15px;
+                    color: #666;
+                    font-style: italic;
+                }
+                .image-placeholder {
+                    background: #f8f9fa;
+                    border: 2px dashed #dee2e6;
+                    padding: 20px;
+                    text-align: center;
+                    color: #6c757d;
+                    margin: 15px 0;
+                    border-radius: 4px;
+                }
             """
-            soup.head.append(style_tag)
+            html_doc.head.append(style_tag)
+            
+            # 创建文章头部
+            header_div = html_doc.new_tag('div', class_='article-header')
+            
+            title_h1 = html_doc.new_tag('h1', class_='article-title')
+            title_h1.string = title
+            header_div.append(title_h1)
+            
+            meta_div = html_doc.new_tag('div', class_='article-meta')
+            meta_div.string = f"作者: {author} | 发布时间: {publish_date} | 原文链接: {url}"
+            header_div.append(meta_div)
+            
+            html_doc.body.append(header_div)
+            
+            # 创建文章内容容器
+            content_div = html_doc.new_tag('div', class_='article-content')
+            
+            # 处理图片并替换为本地路径
+            base_dir = os.path.dirname(output_path)
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)[:20]
+            images_dir = os.path.join(base_dir, f"images_{safe_title}")
+            os.makedirs(images_dir, exist_ok=True)
+            
+            # 替换图片链接
+            img_count = 0
+            for img_tag in content_soup.find_all('img'):
+                img_src = img_tag.get('src') or img_tag.get('data-src') or img_tag.get('data-original')
+                if img_src:
+                    # 查找对应的本地图片
+                    local_img_path = None
+                    for img_info in images:
+                        if img_info.get('url') == img_src or img_src in img_info.get('url', ''):
+                            if img_info.get('local_path') and os.path.exists(img_info['local_path']):
+                                # 复制图片到HTML目录
+                                img_filename = f"img_{img_count:03d}.jpg"
+                                new_img_path = os.path.join(images_dir, img_filename)
+                                try:
+                                    import shutil
+                                    shutil.copy2(img_info['local_path'], new_img_path)
+                                    local_img_path = f"images_{safe_title}/{img_filename}"
+                                    img_count += 1
+                                except Exception as e:
+                                    logger.debug(f"复制图片失败: {e}")
+                                break
+                    
+                    if local_img_path:
+                        img_tag['src'] = local_img_path
+                        # 清理其他属性
+                        for attr in ['data-src', 'data-original', 'data-lazy-src']:
+                            if img_tag.get(attr):
+                                del img_tag[attr]
+                    else:
+                        # 创建图片占位符
+                        placeholder_div = html_doc.new_tag('div', class_='image-placeholder')
+                        placeholder_div.string = f"[图片: {img_src}]"
+                        img_tag.replace_with(placeholder_div)
+            
+            # 将处理后的内容添加到HTML文档
+            for element in content_soup.children:
+                if hasattr(element, 'name'):
+                    content_div.append(element)
+            
+            html_doc.body.append(content_div)
             
             # 保存HTML文件
             with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(str(soup))
+                f.write(str(html_doc.prettify()))
             
             logger.success(f"完整HTML已保存: {output_path}")
-            logger.info(f"图片文件夹: {article_dir}")
+            logger.info(f"📊 统计信息: 图片={img_count}张, 图片目录={images_dir}")
             return True
             
         except Exception as e:
             logger.error(f"保存完整HTML失败: {e}")
+            import traceback
+            logger.debug(f"详细错误信息: {traceback.format_exc()}")
             return False
     
     def extract_full_article_content(self, url: str, download_images: bool = True) -> dict:
@@ -2339,7 +2374,7 @@ class SimpleUrlScraper:
             
             # 尝试匹配常见的时间格式
             date_patterns = [
-                r'publish_time["\s]*[=:]["\s]*(\d{4}-\d{1,2}-\d{1,2}[^\'"]*)',
+                r'publish_time["\s]*[=:]["\s]*("[^"]+)"',
                 r'(\d{4}年\d{1,2}月\d{1,2}日)',
                 r'(\d{4}-\d{1,2}-\d{1,2})',
                 r'(\d{1,2}月\d{1,2}日)'
@@ -2438,6 +2473,139 @@ class SimpleUrlScraper:
         except Exception as e:
             logger.error(f"HTML转文本失败: {e}")
             return ""
+    
+    def save_as_markdown(self, url: str, output_path: str) -> bool:
+        """保存URL为Markdown格式（优化版）"""
+        try:
+            logger.info(f"正在保存Markdown文档: {url}")
+            
+            # 使用已有的文章提取方法，避免重复滚动
+            article_data = self._extract_wechat_article_with_selenium(url)
+            
+            if not article_data or 'error' in article_data:
+                logger.error("无法获取文章内容")
+                return False
+            
+            # 生成Markdown内容
+            markdown_content = []
+            
+            # 添加标题
+            title = article_data.get('title', '微信文章')
+            markdown_content.append(f"# {title}\n")
+            
+            # 添加元信息
+            author = article_data.get('author', '未知')
+            publish_date = article_data.get('publish_date', '未知')
+            markdown_content.append(f"**作者**: {author}")
+            markdown_content.append(f"**发布时间**: {publish_date}")
+            markdown_content.append(f"**原文链接**: {url}")
+            markdown_content.append("\n---\n")
+            
+            # 转换HTML内容为Markdown
+            content_soup = article_data.get('content_soup')
+            if content_soup:
+                markdown_text = self._convert_soup_to_markdown(content_soup)
+                markdown_content.append(markdown_text)
+            else:
+                markdown_content.append("无法提取文章内容")
+            
+            # 确保输出目录存在
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # 保存Markdown文件
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(markdown_content))
+            
+            logger.success(f"Markdown文档保存成功: {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"保存Markdown文档失败: {e}")
+            return False
+    
+    def save_as_json(self, url: str, output_path: str) -> bool:
+        """保存URL为JSON格式（优化版）"""
+        try:
+            logger.info(f"正在保存JSON数据: {url}")
+            
+            # 使用已有的文章提取方法，避免重复滚动
+            article_data = self._extract_wechat_article_with_selenium(url)
+            
+            if not article_data or 'error' in article_data:
+                logger.error("无法获取文章内容")
+                return False
+            
+            # 构建JSON数据
+            json_data = {
+                "title": article_data.get('title', ''),
+                "author": article_data.get('author', ''),
+                "publish_date": article_data.get('publish_date', ''),
+                "url": url,
+                "extraction_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "content": {
+                    "html": str(article_data.get('content_soup', '')),
+                    "text": article_data.get('content_soup', BeautifulSoup('', 'html.parser')).get_text(strip=True) if article_data.get('content_soup') else ''
+                },
+                "images": article_data.get('images', []),
+                "metadata": {
+                    "total_images": len(article_data.get('images', [])),
+                    "content_length": len(article_data.get('content_soup', BeautifulSoup('', 'html.parser')).get_text(strip=True)) if article_data.get('content_soup') else 0,
+                    "extraction_method": "selenium"
+                }
+            }
+            
+            # 确保输出目录存在
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # 保存JSON文件
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, ensure_ascii=False, indent=2)
+            
+            logger.success(f"JSON数据保存成功: {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"保存JSON数据失败: {e}")
+            return False
+
+    def _convert_soup_to_markdown(self, soup: BeautifulSoup) -> str:
+        """将BeautifulSoup对象转换为Markdown格式"""
+        try:
+            markdown_lines = []
+            
+            for element in soup.find_all(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'img', 'strong', 'b', 'em', 'i']):
+                if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                    level = int(element.name[1])
+                    text = element.get_text(strip=True)
+                    if text:
+                        markdown_lines.append(f"{'#' * level} {text}\n")
+                        
+                elif element.name == 'img':
+                    src = element.get('src', '')
+                    alt = element.get('alt', '图片')
+                    if src:
+                        markdown_lines.append(f"![{alt}]({src})\n")
+                        
+                elif element.name in ['strong', 'b']:
+                    text = element.get_text(strip=True)
+                    if text:
+                        markdown_lines.append(f"**{text}**")
+                        
+                elif element.name in ['em', 'i']:
+                    text = element.get_text(strip=True)
+                    if text:
+                        markdown_lines.append(f"*{text}*")
+                        
+                elif element.name in ['p', 'div']:
+                    text = element.get_text(strip=True)
+                    if text and len(text) > 5:  # 过滤太短的内容
+                        markdown_lines.append(f"{text}\n")
+            
+            return '\n'.join(markdown_lines)
+            
+        except Exception as e:
+            logger.error(f"转换Markdown失败: {e}")
+            return soup.get_text(strip=True) if soup else ""
 
 
 

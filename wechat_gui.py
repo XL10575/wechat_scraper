@@ -813,7 +813,7 @@ class WechatDownloaderGUI:
         self.single_format_var = tk.StringVar(value="pdf")
         formats = [
             ("📑 PDF (推荐，保持完整格式)", "pdf"),
-            ("📝 Word文档 (支持飞书直接上传)", "docx"),
+            ("📝 Word文档", "docx"),
             ("🌐 完整HTML (包含图片)", "complete_html"),
             ("📄 Markdown (飞书适用)", "individual"),
             ("📊 JSON数据", "json")
@@ -884,7 +884,10 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
         
         format_options = [
             ("📑 PDF格式 (完整样式，推荐)", "pdf"),
-            ("📝 Word文档 (支持飞书知识库)", "docx")
+            ("📝 Word文档 (支持飞书知识库)", "docx"),
+            ("🌐 完整HTML (包含图片)", "complete_html"),
+            ("📄 Markdown (飞书适用)", "individual"),
+            ("📊 JSON数据", "json")
         ]
         
         for i, (text, value) in enumerate(format_options):
@@ -1676,7 +1679,16 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
                 self.scraper_initializing = True
                 self.msg_queue.put(('progress_single', '首次使用，正在初始化浏览器...'))
                 self.log_message("🔧 首次使用，正在初始化浏览器...", "INFO")
-                self.url_scraper = SimpleUrlScraper(headless=self.headless_var.get())
+                
+                # 在exe环境中，为了支持验证码处理，优先使用非headless模式
+                import sys
+                if getattr(sys, 'frozen', False):  # exe环境
+                    headless_mode = False  # exe环境强制非headless
+                    self.log_message("🔧 exe环境检测：使用可视化模式以支持验证码处理", "INFO")
+                else:
+                    headless_mode = self.headless_var.get()
+                
+                self.url_scraper = SimpleUrlScraper(headless=headless_mode)
                 self.scraper_initializing = False
                 self.log_message("✅ 浏览器初始化完成", "SUCCESS")
             
@@ -1726,11 +1738,26 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 success = self.url_scraper.save_complete_html(url, output_path)
                 
+            elif format_type == "individual":  # Markdown格式
+                self.msg_queue.put(('progress_single', '生成Markdown文档中...'))
+                md_filename = f"{safe_title}.md"
+                output_path = os.path.join(self.output_dir, "markdown", md_filename)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                success = self.url_scraper.save_as_markdown(url, output_path)
+                
+            elif format_type == "json":
+                self.msg_queue.put(('progress_single', '生成JSON文档中...'))
+                json_filename = f"{safe_title}.json"
+                output_path = os.path.join(self.output_dir, "json", json_filename)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                success = self.url_scraper.save_as_json(url, output_path)
+                
             else:
-                # 其他格式暂时标记为成功
-                self.msg_queue.put(('progress_single', f'生成{format_type}格式中...'))
-                success = True
-                output_path = f"{self.output_dir}/{format_type}/{safe_title}"
+                # 未知格式
+                self.msg_queue.put(('progress_single', f'不支持的格式: {format_type}'))
+                self.log_message(f"不支持的格式: {format_type}", "ERROR")
+                success = False
+                output_path = ""
             
             if success:
                 self.log_message("✅ 下载成功!", "SUCCESS")
@@ -1764,7 +1791,16 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
                 self.scraper_initializing = True
                 self.msg_queue.put(('progress_batch', '首次使用，正在初始化浏览器...'))
                 self.log_message("🔧 首次使用，正在初始化浏览器...", "INFO")
-                self.url_scraper = SimpleUrlScraper(headless=self.headless_var.get())
+                
+                # 在exe环境中，为了支持验证码处理，优先使用非headless模式
+                import sys
+                if getattr(sys, 'frozen', False):  # exe环境
+                    headless_mode = False  # exe环境强制非headless
+                    self.log_message("🔧 exe环境检测：使用可视化模式以支持验证码处理", "INFO")
+                else:
+                    headless_mode = self.headless_var.get()
+                
+                self.url_scraper = SimpleUrlScraper(headless=headless_mode)
                 self.scraper_initializing = False
                 self.log_message("✅ 浏览器初始化完成", "SUCCESS")
             
@@ -1858,6 +1894,51 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
                                     counter += 1
                                 
                                 download_success = self.url_scraper.save_as_docx(url, output_path)
+                                
+                            elif format_type == "complete_html":
+                                file_extension = ".html"
+                                filename = f"{safe_title}{file_extension}"
+                                output_path = os.path.join(self.output_dir, "batch_download", filename)
+                                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                                
+                                # 处理文件名冲突
+                                counter = 1
+                                while os.path.exists(output_path):
+                                    filename = f"{safe_title}_{counter}{file_extension}"
+                                    output_path = os.path.join(self.output_dir, "batch_download", filename)
+                                    counter += 1
+                                
+                                download_success = self.url_scraper.save_complete_html(url, output_path)
+                                
+                            elif format_type == "individual":  # Markdown格式
+                                file_extension = ".md"
+                                filename = f"{safe_title}{file_extension}"
+                                output_path = os.path.join(self.output_dir, "batch_download", filename)
+                                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                                
+                                # 处理文件名冲突
+                                counter = 1
+                                while os.path.exists(output_path):
+                                    filename = f"{safe_title}_{counter}{file_extension}"
+                                    output_path = os.path.join(self.output_dir, "batch_download", filename)
+                                    counter += 1
+                                
+                                download_success = self.url_scraper.save_as_markdown(url, output_path)
+                                
+                            elif format_type == "json":
+                                file_extension = ".json"
+                                filename = f"{safe_title}{file_extension}"
+                                output_path = os.path.join(self.output_dir, "batch_download", filename)
+                                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                                
+                                # 处理文件名冲突
+                                counter = 1
+                                while os.path.exists(output_path):
+                                    filename = f"{safe_title}_{counter}{file_extension}"
+                                    output_path = os.path.join(self.output_dir, "batch_download", filename)
+                                    counter += 1
+                                
+                                download_success = self.url_scraper.save_as_json(url, output_path)
                                 
                             else:
                                 raise Exception(f"不支持的格式: {format_type}")
@@ -2155,7 +2236,16 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
             if not self.url_scraper and not self.scraper_initializing:
                 self.scraper_initializing = True
                 self.log_message("🔧 正在初始化URL scraper（首次使用）...", "INFO")
-                self.url_scraper = SimpleUrlScraper(headless=self.headless_var.get())
+                
+                # 在exe环境中，为了支持验证码处理，优先使用非headless模式
+                import sys
+                if getattr(sys, 'frozen', False):  # exe环境
+                    headless_mode = False  # exe环境强制非headless
+                    self.log_message("🔧 exe环境检测：使用可视化模式以支持验证码处理", "INFO")
+                else:
+                    headless_mode = self.headless_var.get()
+                
+                self.url_scraper = SimpleUrlScraper(headless=headless_mode)
                 self.scraper_initializing = False
                 self.log_message("✅ URL scraper初始化完成", "SUCCESS")
             
@@ -3359,18 +3449,23 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
                 self.log_auto_update(f"📚 步骤5: 处理文章下载上传...")
                 success_count = self.auto_download_and_upload_articles(new_articles)
                 
-                # 🔥 修复：根据实际情况给出准确的完成状态
+                # 🔧 修复：根据实际情况给出准确的完成状态
                 if not new_articles:
                     self.log_auto_update("🎉 自动更新完成！知识库内容已是最新状态")
                     self.auto_update_status_var.set("完成 - 无新文章")
-                    # 即使没有新文章，也更新日期节点，表示已检查到该日期
-                    self.log_auto_update("📅 步骤6: 更新检查日期节点...")
+                    # 更新检查日期为今天，表示已检查到今天
+                    self.log_auto_update("📅 步骤6: 更新检查记录...")
                     self.update_last_update_date(end_date)
                 else:
-                    # 步骤6: 更新日期节点
+                    # 步骤6: 更新日期 - 使用最新处理文章的日期
                     if success_count > 0:
-                        self.log_auto_update("📅 步骤6: 更新日期节点...")
-                        self.update_last_update_date(end_date)
+                        self.log_auto_update("📅 步骤6: 更新检查记录...")
+                        # 找到最新的文章日期
+                        latest_date = self.find_latest_article_date(new_articles)
+                        if latest_date:
+                            self.update_last_update_date(latest_date)
+                        else:
+                            self.update_last_update_date(end_date)
                     
                     self.log_auto_update(f"🎉 自动更新完成！成功处理 {success_count}/{len(new_articles)} 篇文章")
                     self.auto_update_status_var.set(f"完成 - 更新了{success_count}篇文章")
@@ -3541,26 +3636,23 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
             return False
     
     def calculate_update_date_range(self):
-        """计算更新日期范围 - 包含防漏检查"""
+        """计算更新日期范围 - 只检查最近3天"""
         from datetime import datetime, timedelta
         
         # 当前日期
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d")
         
-        # 上次更新日期
-        last_update = datetime.strptime(self.last_update_date, "%Y-%m-%d")
-        
-        # 🆕 防漏检查：检查前3天的所有文章
-        # 从上次更新日期前3天开始，确保不遗漏任何文章
-        start_date = last_update - timedelta(days=3)
+        # 🔧 修复：只检查最近3天的文章，不依赖上次更新日期
+        # 从今天开始倒推3天
+        start_date = today - timedelta(days=3)
         start_date_str = start_date.strftime("%Y-%m-%d")
         
-        self.log_auto_update(f"📅 计算更新范围（防漏检查）:")
-        self.log_auto_update(f"   🕐 开始日期: {start_date_str} (上次更新前3天)")
+        self.log_auto_update(f"📅 计算更新范围（最近3天检查）:")
+        self.log_auto_update(f"   🕐 开始日期: {start_date_str} (3天前)")
         self.log_auto_update(f"   🕐 结束日期: {today_str} (今天)")
-        self.log_auto_update(f"   📌 上次更新: {self.last_update_date}")
-        self.log_auto_update(f"   🛡️ 防漏策略: 向前检查3天确保完整性")
+        self.log_auto_update(f"   📌 检查策略: 只检查最近3天内的文章")
+        self.log_auto_update(f"   💡 这样可以确保不会遗漏最新文章，也不会重复处理太多历史文章")
         
         return start_date_str, today_str
     
@@ -3582,10 +3674,10 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
             
             self.log_auto_update(f"📥 收集到 {len(articles)} 篇文章")
             
-            # 🔥 修复：跳过时间筛选，直接进行智能知识库重复检测
-            # 由于我们已经做了防漏检查（前3天），让知识库重复检测来决定哪些文章需要更新
-            self.log_auto_update(f"📊 跳过时间筛选，将对所有 {len(articles)} 篇文章进行智能重复检测")
-            self.log_auto_update(f"💡 原因：防漏检查已限定时间范围，智能重复检测更准确")
+            # 🔧 修复：跳过时间筛选，直接进行知识库重复检测
+            # 时间范围已由收集阶段限定（最近3天），直接检测重复即可
+            self.log_auto_update(f"📊 对收集到的 {len(articles)} 篇文章进行知识库重复检测")
+            self.log_auto_update(f"💡 原因：时间范围已限定为最近3天，重复检测来决定哪些需要更新")
             
             # 显示收集到的文章详情
             if articles:
@@ -3875,12 +3967,35 @@ https://mp.weixin.qq.com/s?a=b&c=d"""
             self.log_auto_update(f"   ❌ [{current}/{total}] 智能分类处理异常: {e}")
             return False
     
+    def find_latest_article_date(self, articles):
+        """找到文章列表中最新的日期"""
+        if not articles:
+            return None
+        
+        from datetime import datetime
+        latest_date = None
+        latest_timestamp = 0
+        
+        for article in articles:
+            publish_time_str = article.get('publish_time', '')
+            if publish_time_str:
+                try:
+                    publish_time = datetime.strptime(publish_time_str, "%Y-%m-%d %H:%M:%S")
+                    timestamp = publish_time.timestamp()
+                    if timestamp > latest_timestamp:
+                        latest_timestamp = timestamp
+                        latest_date = publish_time.strftime("%Y-%m-%d")
+                except:
+                    pass
+        
+        return latest_date
+    
     def update_last_update_date(self, new_date):
         """更新最后更新日期"""
         self.last_update_date = new_date
         self.last_update_date_var.set(new_date)
         self.save_auto_update_settings()
-        self.log_auto_update(f"📅 更新日期节点: {new_date}")
+        self.log_auto_update(f"📅 更新检查记录: {new_date}")
 
 
 def main():
