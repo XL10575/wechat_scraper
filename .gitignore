@@ -60,6 +60,8 @@ debug_*.py
 build/
 dist/
 WeChat_Article_Scraper_Portable/
+WeChat_Article_Scraper.zip
+WeChat_Article_Scraper/
 
 # 其他
 .DS_Store
